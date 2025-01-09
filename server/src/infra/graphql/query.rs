@@ -1196,7 +1196,7 @@ mod tests {
                     isEditable
                     isHardcoded
                 }
-                extraLdapObjectClasses
+                extraObjectClasses
             }
             groupSchema {
                 attributes {
@@ -1207,7 +1207,7 @@ mod tests {
                     isEditable
                     isHardcoded
                 }
-                extraLdapObjectClasses
+                extraObjectClasses
             }
           }
         }"#;
@@ -1293,7 +1293,7 @@ mod tests {
                                     "isHardcoded": true,
                                 },
                             ],
-                            "extraLdapObjectClasses": ["customUserClass"],
+                            "extraObjectClasses": ["customUserClass"],
                         },
                         "groupSchema": {
                             "attributes": [
@@ -1330,7 +1330,7 @@ mod tests {
                                     "isHardcoded": true,
                                 },
                             ],
-                            "extraLdapObjectClasses": [],
+                            "extraObjectClasses": [],
                         }
                     }
                 }),
@@ -1347,7 +1347,7 @@ mod tests {
                 attributes {
                     name
                 }
-                extraLdapObjectClasses
+                extraObjectClasses
             }
           }
         }"#;
@@ -1398,7 +1398,7 @@ mod tests {
                                 {"name": "user_id"},
                                 {"name": "uuid"},
                             ],
-                            "extraLdapObjectClasses": ["customUserClass"],
+                            "extraObjectClasses": ["customUserClass"],
                         }
                     }
                 } ),
