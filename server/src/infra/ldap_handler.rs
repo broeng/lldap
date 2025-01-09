@@ -35,6 +35,12 @@ use itertools::Itertools;
 use chrono::Utc;
 
 #[derive(Debug)]
+enum SupportProbe {
+    SambaDomain,
+    SambaDomainName(String),
+}
+
+#[derive(Debug)]
 enum SearchScope {
     Global,
     Users,
@@ -43,6 +49,7 @@ enum SearchScope {
     Group(LdapFilter),
     UserOuOnly,
     GroupOuOnly,
+    SchemaSupport(SupportProbe),
     Unknown,
     Invalid,
 }
@@ -53,16 +60,54 @@ enum InternalSearchResults {
     Empty,
 }
 
+fn get_support_probe(
+    ldap_filter: &LdapFilter,
+) -> Option<SupportProbe> {
+    match ldap_filter {
+        LdapFilter::Equality(field, value) => {
+            if field == "objectClass" && value == "sambaDomain" {
+                debug!("Detected a objectClass=sambaDomain support probe");
+                Some(SupportProbe::SambaDomain)
+            } else {
+                None
+            }
+        }
+        LdapFilter::And(conditions) => {
+            match conditions.as_slice() {
+                [ LdapFilter::Equality(f1, v1), LdapFilter::Equality(f2, v2) ] => {
+                    if f1 == "objectClass" && v1 == "sambaDomain" && f2 == "sambaDomainName" {
+                        Some(SupportProbe::SambaDomainName(v2.to_string()))
+                    } else {
+                        None
+                    }
+                }
+                _ => {
+                    None
+                }
+            }
+        }
+        _ => None
+    }
+}
+
 fn get_search_scope(
     base_dn: &[(String, String)],
     dn_parts: &[(String, String)],
     ldap_scope: &LdapSearchScope,
+    ldap_filter: &LdapFilter,
 ) -> SearchScope {
     let base_dn_len = base_dn.len();
     if !is_subtree(dn_parts, base_dn) {
         SearchScope::Invalid
     } else if dn_parts.len() == base_dn_len {
-        SearchScope::Global
+        match get_support_probe(&ldap_filter) {
+            Some(support_probe) => {
+                SearchScope::SchemaSupport(support_probe)
+            }
+            _ => {
+              SearchScope::Global
+            }
+        }
     } else if dn_parts.len() == base_dn_len + 1
         && dn_parts[0] == ("ou".to_string(), "people".to_string())
     {
@@ -864,7 +909,7 @@ impl<Backend: BackendHandler + LoginHandler + OpaqueHandler> LdapHandler<Backend
         schema: &PublicSchema,
     ) -> LdapResult<InternalSearchResults> {
         let dn_parts = parse_distinguished_name(&request.base.to_ascii_lowercase())?;
-        let scope = get_search_scope(&self.ldap_info.base_dn, &dn_parts, &request.scope);
+        let scope = get_search_scope(&self.ldap_info.base_dn, &dn_parts, &request.scope, &request.filter);
         debug!(?request.base, ?scope);
         // Disambiguate the lifetimes.
         fn cast<'a, T, R>(x: T) -> T
@@ -945,6 +990,44 @@ impl<Backend: BackendHandler + LoginHandler + OpaqueHandler> LdapHandler<Backend
                         vals: vec![b"top".to_vec(), b"organizationalUnit".to_vec()],
                     }],
                 })])
+            }
+            SearchScope::SchemaSupport(probe) => {
+                match probe {
+                    SupportProbe::SambaDomain => {
+                        InternalSearchResults::Raw(vec![LdapOp::SearchResultEntry(
+                            LdapSearchResultEntry {
+                                dn: request.base.clone(),
+                                attributes: vec![
+                                    LdapPartialAttribute {
+                                        atype: "sambaDomainName".to_owned(),
+                                        vals: vec![ self.ldap_info.base_dn[0].1.as_bytes().to_vec() ],
+                                    },
+                                    LdapPartialAttribute {
+                                        atype: "sambaSID".to_owned(),
+                                        vals: vec![ b"S-1-5-21-2293260629-1257142175-1903762185".to_vec() ]
+                                    }
+                                ],
+                            }
+                        )])
+                    }
+                    SupportProbe::SambaDomainName(name) => {
+                        InternalSearchResults::Raw(vec![LdapOp::SearchResultEntry(
+                            LdapSearchResultEntry {
+                                dn: request.base.clone(),
+                                attributes: vec![
+                                    LdapPartialAttribute {
+                                        atype: "sambaDomainName".to_owned(),
+                                        vals: vec![ name.as_bytes().to_vec() ],
+                                    },
+                                    LdapPartialAttribute {
+                                        atype: "sambaSID".to_owned(),
+                                        vals: vec![ b"S-1-5-21-2293260629-1257142175-1903762185".to_vec() ]
+                                    }
+                                ],
+                            }
+                        )])
+                    }
+                }
             }
             SearchScope::Unknown => {
                 warn!(
@@ -1807,6 +1890,67 @@ mod tests {
                             atype: "uniqueMember".to_string(),
                             vals: vec![b"uid=john,ou=people,dc=example,dc=com".to_vec()]
                         },
+                    ],
+                }),
+                make_search_success(),
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_probe_samba_domain() {
+        let mut ldap_handler = setup_bound_readonly_handler(MockTestBackendHandler::new()).await;
+        let request = make_search_request(
+            "dc=example,dc=com",
+            LdapFilter::Equality("objectClass".to_string(), "sambaDomain".to_string()),
+            vec![ "dn" ],
+        );
+        assert_eq!(
+            ldap_handler.do_search_or_dse(&request).await,
+            Ok(vec![
+                LdapOp::SearchResultEntry(LdapSearchResultEntry {
+                    dn: "dc=example,dc=com".to_string(),
+                    attributes: vec![
+                        LdapPartialAttribute {
+                            atype: "sambaDomainName".to_owned(),
+                            vals: vec![ b"example".to_vec() ]
+                        },
+                        LdapPartialAttribute {
+                            atype: "sambaSID".to_owned(),
+                            vals: vec![ b"S-1-5-21-2293260629-1257142175-1903762185".to_vec() ]
+                        }
+                    ],
+                }),
+                make_search_success(),
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_probe_samba_domain_2() {
+        let mut ldap_handler = setup_bound_readonly_handler(MockTestBackendHandler::new()).await;
+        let request = make_search_request(
+            "dc=example,dc=com",
+            LdapFilter::And(vec![
+                LdapFilter::Equality("objectClass".to_string(), "sambaDomain".to_string()),
+                LdapFilter::Equality("sambaDomainName".to_string(), "name".to_string()),
+            ]),
+            vec![ "dn" ],
+        );
+        assert_eq!(
+            ldap_handler.do_search_or_dse(&request).await,
+            Ok(vec![
+                LdapOp::SearchResultEntry(LdapSearchResultEntry {
+                    dn: "dc=example,dc=com".to_string(),
+                    attributes: vec![
+                        LdapPartialAttribute {
+                            atype: "sambaDomainName".to_owned(),
+                            vals: vec![ b"name".to_vec() ]
+                        },
+                        LdapPartialAttribute {
+                            atype: "sambaSID".to_owned(),
+                            vals: vec![ b"S-1-5-21-2293260629-1257142175-1903762185".to_vec() ]
+                        }
                     ],
                 }),
                 make_search_success(),
