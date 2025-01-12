@@ -1756,10 +1756,16 @@ mod tests {
                         true.into(),
                         true.into(),
                         false.into(),
-                        UserRequestFilter::AttributeEquality(
-                            AttributeName::from("first_name"),
-                            Serialized::from("firstname"),
-                        ),
+                        UserRequestFilter::Or(vec![
+                            UserRequestFilter::AttributeEquality(
+                                AttributeName::from("first_name"),
+                                Serialized::from("FirstName"),
+                            ),
+                            UserRequestFilter::AttributeEquality(
+                                AttributeName::from("first_name"),
+                                Serialized::from("firstname"),
+                            ),
+                        ]),
                         false.into(),
                         UserRequestFilter::UserIdSubString(SubStringFilter {
                             initial: Some("iNIt".to_owned()),
@@ -1800,7 +1806,7 @@ mod tests {
                 LdapFilter::Present("objectClass".to_string()),
                 LdapFilter::Present("uid".to_string()),
                 LdapFilter::Present("unknown".to_string()),
-                LdapFilter::Equality("givenname".to_string(), "firstname".to_string()),
+                LdapFilter::Equality("givenname".to_string(), "FirstName".to_string()),
                 LdapFilter::Equality("unknown_attribute".to_string(), "randomValue".to_string()),
                 LdapFilter::Substring(
                     "uid".to_owned(),
