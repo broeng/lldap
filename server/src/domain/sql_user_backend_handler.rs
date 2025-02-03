@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use lldap_domain::{
     requests::{CreateUserRequest, UpdateUserRequest},
     types::{
-        AttributeName, AttributeValue, GroupDetails, GroupId, Serialized, User, UserAndGroups,
-        UserId, Uuid,
+        Attribute, AttributeName, GroupDetails, GroupId, Serialized, User, UserAndGroups, UserId,
+        Uuid,
     },
 };
 use sea_orm::{
@@ -165,7 +165,7 @@ impl UserListerBackendHandler for SqlBackendHandler {
         for user in users.iter_mut() {
             user.user.attributes = attributes_iter
                 .take_while_ref(|u| u.user_id == user.user.user_id)
-                .map(AttributeValue::from)
+                .map(Attribute::from)
                 .collect();
         }
         Ok(users)
@@ -284,7 +284,7 @@ impl UserBackendHandler for SqlBackendHandler {
             .order_by_asc(model::UserAttributesColumn::AttributeName)
             .all(&self.sql_pool)
             .await?;
-        user.attributes = attributes.into_iter().map(AttributeValue::from).collect();
+        user.attributes = attributes.into_iter().map(Attribute::from).collect();
         Ok(user)
     }
 
@@ -843,15 +843,15 @@ mod tests {
         assert_eq!(
             user.attributes,
             vec![
-                AttributeValue {
+                Attribute {
                     name: "avatar".into(),
                     value: Serialized::from(&JpegPhoto::for_tests())
                 },
-                AttributeValue {
+                Attribute {
                     name: "first_name".into(),
                     value: Serialized::from("first_name")
                 },
-                AttributeValue {
+                Attribute {
                     name: "last_name".into(),
                     value: Serialized::from("last_name")
                 }
@@ -884,11 +884,11 @@ mod tests {
         assert_eq!(
             user.attributes,
             vec![
-                AttributeValue {
+                Attribute {
                     name: "avatar".into(),
                     value: Serialized::from(&JpegPhoto::for_tests())
                 },
-                AttributeValue {
+                Attribute {
                     name: "first_name".into(),
                     value: Serialized::from("first bob")
                 }
@@ -907,7 +907,7 @@ mod tests {
                 first_name: None,
                 last_name: None,
                 avatar: None,
-                insert_attributes: vec![AttributeValue {
+                insert_attributes: vec![Attribute {
                     name: "first_name".into(),
                     value: Serialized::from("new first"),
                 }],
@@ -924,11 +924,11 @@ mod tests {
         assert_eq!(
             user.attributes,
             vec![
-                AttributeValue {
+                Attribute {
                     name: "first_name".into(),
                     value: Serialized::from("new first")
                 },
-                AttributeValue {
+                Attribute {
                     name: "last_name".into(),
                     value: Serialized::from("last bob")
                 }
@@ -960,7 +960,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             user.attributes,
-            vec![AttributeValue {
+            vec![Attribute {
                 name: "last_name".into(),
                 value: Serialized::from("last bob")
             }]
@@ -979,7 +979,7 @@ mod tests {
                 last_name: None,
                 avatar: None,
                 delete_attributes: vec!["first_name".into()],
-                insert_attributes: vec![AttributeValue {
+                insert_attributes: vec![Attribute {
                     name: "first_name".into(),
                     value: Serialized::from("new first"),
                 }],
@@ -996,11 +996,11 @@ mod tests {
         assert_eq!(
             user.attributes,
             vec![
-                AttributeValue {
+                Attribute {
                     name: "first_name".into(),
                     value: Serialized::from("new first")
                 },
-                AttributeValue {
+                Attribute {
                     name: "last_name".into(),
                     value: Serialized::from("last bob")
                 },
@@ -1027,7 +1027,7 @@ mod tests {
             .get_user_details(&UserId::new("bob"))
             .await
             .unwrap();
-        let avatar = AttributeValue {
+        let avatar = Attribute {
             name: "avatar".into(),
             value: Serialized::from(&JpegPhoto::for_tests()),
         };
@@ -1061,15 +1061,15 @@ mod tests {
                 email: "email".into(),
                 display_name: Some("display_name".to_string()),
                 attributes: vec![
-                    AttributeValue {
+                    Attribute {
                         name: "first_name".into(),
                         value: Serialized::from("First Name"),
                     },
-                    AttributeValue {
+                    Attribute {
                         name: "last_name".into(),
                         value: Serialized::from("last_name"),
                     },
-                    AttributeValue {
+                    Attribute {
                         name: "avatar".into(),
                         value: Serialized::from(&JpegPhoto::for_tests()),
                     },
@@ -1088,15 +1088,15 @@ mod tests {
         assert_eq!(
             user.attributes,
             vec![
-                AttributeValue {
+                Attribute {
                     name: "avatar".into(),
                     value: Serialized::from(&JpegPhoto::for_tests())
                 },
-                AttributeValue {
+                Attribute {
                     name: "first_name".into(),
                     value: Serialized::from("First Name")
                 },
-                AttributeValue {
+                Attribute {
                     name: "last_name".into(),
                     value: Serialized::from("last_name")
                 }
