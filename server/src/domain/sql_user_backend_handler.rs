@@ -318,27 +318,6 @@ impl UserBackendHandler for SqlBackendHandler {
             ..Default::default()
         };
         let mut new_user_attributes = Vec::new();
-        if let Some(first_name) = request.first_name {
-            new_user_attributes.push(model::user_attributes::ActiveModel {
-                user_id: Set(request.user_id.clone()),
-                attribute_name: Set("first_name".into()),
-                value: Set(Serialized::from(&first_name)),
-            });
-        }
-        if let Some(last_name) = request.last_name {
-            new_user_attributes.push(model::user_attributes::ActiveModel {
-                user_id: Set(request.user_id.clone()),
-                attribute_name: Set("last_name".into()),
-                value: Set(Serialized::from(&last_name)),
-            });
-        }
-        if let Some(avatar) = request.avatar {
-            new_user_attributes.push(model::user_attributes::ActiveModel {
-                user_id: Set(request.user_id.clone()),
-                attribute_name: Set("avatar".into()),
-                value: Set(Serialized::from(&avatar)),
-            });
-        }
         self.sql_pool
             .transaction::<_, (), DomainError>(|transaction| {
                 Box::pin(async move {
@@ -1081,13 +1060,20 @@ mod tests {
                 user_id: UserId::new("james"),
                 email: "email".into(),
                 display_name: Some("display_name".to_string()),
-                first_name: None,
-                last_name: Some("last_name".to_string()),
-                avatar: Some(JpegPhoto::for_tests()),
-                attributes: vec![AttributeValue {
-                    name: "first_name".into(),
-                    value: Serialized::from("First Name"),
-                }],
+                attributes: vec![
+                    AttributeValue {
+                        name: "first_name".into(),
+                        value: Serialized::from("First Name"),
+                    },
+                    AttributeValue {
+                        name: "last_name".into(),
+                        value: Serialized::from("last_name"),
+                    },
+                    AttributeValue {
+                        name: "avatar".into(),
+                        value: Serialized::from(&JpegPhoto::for_tests()),
+                    },
+                ],
             })
             .await
             .unwrap();

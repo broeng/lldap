@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
     domain::{
@@ -163,6 +163,48 @@ fn unpack_attributes(
     })
 }
 
+fn consolidate_attributes(
+    attributes: Vec<AttributeValue>,
+    first_name: Option<String>,
+    last_name: Option<String>,
+    avatar: Option<String>,
+) -> Vec<AttributeValue> {
+    // Prepare map with the attributes from fields, which will have lower
+    // priority than a value from a corresponding attribute already given.
+    let mut fallback_attrs: BTreeMap<String, AttributeValue> = BTreeMap::new();
+    if let Some(first_name) = first_name {
+        let attr_value = AttributeValue {
+            name: "first_name".into(),
+            value: vec![first_name],
+        };
+        fallback_attrs.insert(attr_value.name.clone(), attr_value);
+    }
+    if let Some(last_name) = last_name {
+        let attr_value = AttributeValue {
+            name: "last_name".into(),
+            value: vec![last_name],
+        };
+        fallback_attrs.insert(attr_value.name.clone(), attr_value);
+    }
+    if let Some(avatar) = avatar {
+        let attr_value = AttributeValue {
+            name: "avatar".into(),
+            value: vec![avatar],
+        };
+        fallback_attrs.insert(attr_value.name.clone(), attr_value);
+    }
+    // Prepare map of the client provided attributes
+    let mut provided_attributes: BTreeMap<String, AttributeValue> = attributes
+        .into_iter()
+        .map(|x| (x.name.clone(), x))
+        .collect::<BTreeMap<_, _>>();
+    // Merge the two attribute maps, overriding any shared attributes in fallback_attrs
+    // with the value from provided_attributes
+    fallback_attrs.append(&mut provided_attributes);
+    // Return the values of the resulting map
+    fallback_attrs.into_values().collect()
+}
+
 #[graphql_object(context = Context<Handler>)]
 impl<Handler: BackendHandler> Mutation<Handler> {
     async fn create_user(
@@ -177,20 +219,18 @@ impl<Handler: BackendHandler> Mutation<Handler> {
             .get_admin_handler()
             .ok_or_else(field_error_callback(&span, "Unauthorized user creation"))?;
         let user_id = UserId::new(&user.id);
-        let avatar = user
-            .avatar
-            .map(|bytes| base64::engine::general_purpose::STANDARD.decode(bytes))
-            .transpose()
-            .context("Invalid base64 image")?
-            .map(JpegPhoto::try_from)
-            .transpose()
-            .context("Provided image is not a valid JPEG")?;
         let schema = handler.get_schema().await?;
+        let consolidated_attributes = consolidate_attributes(
+            user.attributes.unwrap_or_default(),
+            user.first_name,
+            user.last_name,
+            user.avatar,
+        );
         let UnpackedAttributes {
             email,
             display_name,
             attributes,
-        } = unpack_attributes(user.attributes.unwrap_or_default(), &schema, true)?;
+        } = unpack_attributes(consolidated_attributes, &schema, true)?;
         handler
             .create_user(CreateUserRequest {
                 user_id: user_id.clone(),
@@ -200,9 +240,6 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                     .or(email)
                     .ok_or_else(|| anyhow!("Email is required when creating a new user"))?,
                 display_name: user.display_name.or(display_name),
-                first_name: user.first_name,
-                last_name: user.last_name,
-                avatar,
                 attributes,
             })
             .instrument(span.clone())
@@ -961,5 +998,105 @@ mod tests {
                 panic!();
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_attribute_consolidation_attr_precedence() {
+        let attributes = vec![
+            AttributeValue {
+                name: "first_name".to_string(),
+                value: vec!["expected-first".to_string()],
+            },
+            AttributeValue {
+                name: "last_name".to_string(),
+                value: vec!["expected-last".to_string()],
+            },
+            AttributeValue {
+                name: "avatar".to_string(),
+                value: vec!["expected-avatar".to_string()],
+            },
+        ];
+        let res = consolidate_attributes(
+            attributes.clone(),
+            Some("overridden-first".to_string()),
+            Some("overridden-last".to_string()),
+            Some("overriden-avatar".to_string()),
+        );
+        assert_eq!(
+            res,
+            vec![
+                AttributeValue {
+                    name: "avatar".to_string(),
+                    value: vec!["expected-avatar".to_string()],
+                },
+                AttributeValue {
+                    name: "first_name".to_string(),
+                    value: vec!["expected-first".to_string()],
+                },
+                AttributeValue {
+                    name: "last_name".to_string(),
+                    value: vec!["expected-last".to_string()],
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_attribute_consolidation_field_fallback() {
+        let attributes = Vec::new();
+        let res = consolidate_attributes(
+            attributes.clone(),
+            Some("expected-first".to_string()),
+            Some("expected-last".to_string()),
+            Some("expected-avatar".to_string()),
+        );
+        assert_eq!(
+            res,
+            vec![
+                AttributeValue {
+                    name: "avatar".to_string(),
+                    value: vec!["expected-avatar".to_string()],
+                },
+                AttributeValue {
+                    name: "first_name".to_string(),
+                    value: vec!["expected-first".to_string()],
+                },
+                AttributeValue {
+                    name: "last_name".to_string(),
+                    value: vec!["expected-last".to_string()],
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_attribute_consolidation_field_fallback_2() {
+        let attributes = vec![AttributeValue {
+            name: "first_name".to_string(),
+            value: vec!["expected-first".to_string()],
+        }];
+        let res = consolidate_attributes(
+            attributes.clone(),
+            Some("overriden-first".to_string()),
+            Some("expected-last".to_string()),
+            Some("expected-avatar".to_string()),
+        );
+        assert_eq!(
+            res,
+            vec![
+                AttributeValue {
+                    name: "avatar".to_string(),
+                    value: vec!["expected-avatar".to_string()],
+                },
+                AttributeValue {
+                    name: "first_name".to_string(),
+                    value: vec!["expected-first".to_string()],
+                },
+                AttributeValue {
+                    name: "last_name".to_string(),
+                    value: vec!["expected-last".to_string()],
+                },
+            ]
+        );
     }
 }

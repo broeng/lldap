@@ -10,9 +10,6 @@ pub struct CreateUserRequest {
     pub user_id: UserId,
     pub email: Email,
     pub display_name: Option<String>,
-    pub first_name: Option<String>,
-    pub last_name: Option<String>,
-    pub avatar: Option<JpegPhoto>,
     pub attributes: Vec<AttributeValue>,
 }
 
