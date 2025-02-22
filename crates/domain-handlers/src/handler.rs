@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use ldap3_proto::proto::LdapSubstringFilter;
+use lldap_auth::access_control::ValidationResults;
 use lldap_domain::{
     requests::{
         CreateAttributeRequest, CreateGroupRequest, CreateUserRequest, UpdateGroupRequest,
@@ -113,6 +114,24 @@ pub enum GroupRequestFilter {
 impl From<bool> for GroupRequestFilter {
     fn from(val: bool) -> Self {
         if val { Self::True } else { Self::False }
+    }
+}
+
+#[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
+pub struct RequestContext {
+    pub validation_results: Option<ValidationResults>,
+}
+
+impl RequestContext {
+    pub fn new(validation_results: ValidationResults) -> Self {
+        Self {
+            validation_results: Some(validation_results),
+        }
+    }
+    pub fn empty() -> Self {
+        Self {
+            validation_results: None,
+        }
     }
 }
 
