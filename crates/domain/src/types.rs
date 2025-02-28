@@ -646,7 +646,7 @@ impl ValueType for AttributeType {
     }
 }
 
-#[derive(PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct Group {
     pub id: GroupId,
     pub display_name: GroupName,
@@ -665,7 +665,7 @@ pub struct GroupDetails {
     pub attributes: Vec<Attribute>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserAndGroups {
     pub user: User,
     pub groups: Option<Vec<GroupDetails>>,
