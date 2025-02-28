@@ -17,7 +17,10 @@ use lldap_domain::{
         AttributeName, AttributeType, GroupDetails, LdapObjectClass, User, UserAndGroups, UserId,
     },
 };
-use lldap_domain_handlers::handler::{UserListerBackendHandler, UserRequestFilter};
+use lldap_domain_handlers::{
+    handler::{RequestContext, UserListerBackendHandler, UserRequestFilter},
+    requests::ListUsersRequest,
+};
 use lldap_domain_model::model::UserColumn;
 use tracing::{debug, instrument, warn};
 
@@ -200,7 +203,7 @@ fn get_user_attribute_equality_filter(
     }
 }
 
-fn convert_user_filter(
+pub fn convert_user_filter(
     ldap_info: &LdapInfo,
     filter: &LdapFilter,
     schema: &PublicSchema,
@@ -333,11 +336,18 @@ pub async fn get_user_list<Backend: UserListerBackendHandler>(
     base: &str,
     backend: &Backend,
     schema: &PublicSchema,
+    request_context: &RequestContext,
 ) -> LdapResult<Vec<UserAndGroups>> {
     let filters = convert_user_filter(ldap_info, ldap_filter, schema)?;
     debug!(?filters);
     backend
-        .list_users(Some(filters), request_groups)
+        .list_users(
+            request_context,
+            ListUsersRequest {
+                filter: Some(filters),
+                need_groups: request_groups,
+            },
+        )
         .await
         .map_err(|e| LdapError {
             code: LdapResultCode::Other,

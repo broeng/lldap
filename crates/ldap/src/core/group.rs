@@ -15,8 +15,11 @@ use lldap_domain::{
     public_schema::PublicSchema,
     types::{AttributeName, AttributeType, Group, GroupId, LdapObjectClass, UserId, Uuid},
 };
-use lldap_domain_handlers::handler::{GroupListerBackendHandler, GroupRequestFilter};
 use tracing::{debug, instrument, warn};
+use lldap_domain_handlers::{
+    handler::{GroupListerBackendHandler, GroupRequestFilter, RequestContext},
+    requests::ListGroupsRequest,
+};
 
 pub const REQUIRED_GROUP_ATTRIBUTES: &[&str] = &["display_name"];
 
@@ -188,7 +191,7 @@ fn get_group_attribute_equality_filter(
     }
 }
 
-fn convert_group_filter(
+pub fn convert_group_filter(
     ldap_info: &LdapInfo,
     filter: &LdapFilter,
     schema: &PublicSchema,
@@ -308,11 +311,17 @@ pub async fn get_groups_list<Backend: GroupListerBackendHandler>(
     base: &str,
     backend: &Backend,
     schema: &PublicSchema,
+    request_context: &RequestContext,
 ) -> LdapResult<Vec<Group>> {
     let filters = convert_group_filter(ldap_info, ldap_filter, schema)?;
     debug!(?filters);
     backend
-        .list_groups(Some(filters))
+        .list_groups(
+            request_context,
+            ListGroupsRequest {
+                filter: Some(filters),
+            },
+        )
         .await
         .map_err(|e| LdapError {
             code: LdapResultCode::Other,
