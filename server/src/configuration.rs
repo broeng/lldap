@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, HashSet};
+
 use crate::{
     cli::{
         GeneralConfigOpts, LdapsOpts, RunOpts, SmtpEncryption, SmtpOpts, TestEmailOpts,
@@ -19,6 +21,7 @@ use lldap_domain::types::{AttributeName, UserId};
 use lldap_sql_backend_handler::sql_tables::{
     ConfigLocation, PrivateKeyHash, PrivateKeyInfo, PrivateKeyLocation,
 };
+use lldap_plugin_engine::api::permissions::Permissions;
 use secstr::SecUtf8;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -83,6 +86,28 @@ impl std::default::Default for LdapsOptions {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, derive_builder::Builder)]
+#[builder(pattern = "owned")]
+pub struct PluginOptions {
+    #[builder(default = "true")]
+    pub enabled: bool,
+    #[builder(default = r#"None"#)]
+    pub kvscope: Option<String>,
+    pub plugin_path: PathBuf,
+    #[builder(default = r#"Permissions::default()"#)]
+    #[serde(default)]
+    pub permissions: Permissions,
+    #[builder(default = r#"BTreeMap::new()"#)]
+    #[serde(default)]
+    pub config: BTreeMap<String, String>,
+}
+
+impl std::default::Default for PluginOptions {
+    fn default() -> Self {
+        PluginOptionsBuilder::default().build().unwrap()
+    }
+}
+
 #[derive(Clone, Deserialize, Serialize, derive_more::Debug)]
 #[debug(r#""{_0}""#)]
 pub struct HttpUrl(pub Url);
@@ -138,6 +163,9 @@ pub struct Configuration {
     #[serde(skip)]
     #[builder(field(private), default = "None")]
     server_setup: Option<ServerSetupConfig>,
+    #[builder(default = r#"BTreeMap::new()"#)]
+    #[serde(default)]
+    pub plugins: BTreeMap<String, PluginOptions>,
 }
 
 impl std::default::Default for Configuration {
