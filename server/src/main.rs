@@ -26,27 +26,42 @@ use crate::{
 };
 use actix::Actor;
 use actix_server::ServerBuilder;
-use anyhow::{Context, Result, anyhow, bail};
-use futures_util::TryFutureExt;
 use lldap_sql_backend_handler::{
     SqlBackendHandler, register_password,
     sql_tables::{self, get_private_key_info, set_private_key_info},
 };
+use anyhow::{anyhow, bail, Context, Result};
+use domain::{opaque_handler::OpaqueHandler, plugin_backend_handler::PluginBackendHandler};
+use lldap_plugin_kv_store::store::PluginKeyValueStore;
 use sea_orm::{Database, DatabaseConnection};
 use std::time::Duration;
 use tracing::{Instrument, Level, debug, error, info, instrument, span, warn};
 
-use lldap_domain::requests::{CreateGroupRequest, CreateUserRequest};
-use lldap_domain_handlers::handler::{
-    GroupBackendHandler, GroupListerBackendHandler, GroupRequestFilter, UserBackendHandler,
-    UserListerBackendHandler, UserRequestFilter,
+use lldap_domain_handlers::{
+    handler::{
+        BackendHandler, GroupRequestFilter, RequestContext, UserListerBackendHandler,
+        UserRequestFilter,
+    },
+    requests::{
+        AddUserToGroupRequest, CreateGroupRequest, CreateUserRequest, ListGroupsRequest,
+        ListUsersRequest,
+    },
 };
 
-const ADMIN_PASSWORD_MISSING_ERROR: &str = "The LDAP admin password must be initialized. \
+use lldap_plugin_engine::api::{handler::PluginHandler, types::PluginConfig};
+
+mod domain;
+mod infra;
+
+const ADMIN_PASSWORD_MISSING_ERROR : &str = "The LDAP admin password must be initialized. \
             Either set the `ldap_user_pass` config value or the `LLDAP_LDAP_USER_PASS` environment variable. \
             A minimum of 8 characters is recommended.";
 
-async fn create_admin_user(handler: &SqlBackendHandler, config: &Configuration) -> Result<()> {
+async fn create_admin_user<A: BackendHandler + OpaqueHandler>(
+    handler: &A,
+    config: &Configuration,
+    context: &RequestContext,
+) -> Result<()> {
     let pass_length = config
         .ldap_user_pass
         .as_ref()
@@ -59,12 +74,15 @@ async fn create_admin_user(handler: &SqlBackendHandler, config: &Configuration) 
         pass_length
     );
     handler
-        .create_user(CreateUserRequest {
-            user_id: config.ldap_user_dn.clone(),
-            email: config.ldap_user_email.clone().into(),
-            display_name: Some("Administrator".to_string()),
-            ..Default::default()
-        })
+        .create_user(
+            context,
+            CreateUserRequest {
+                user_id: config.ldap_user_dn.clone(),
+                email: config.ldap_user_email.clone().into(),
+                display_name: Some("Administrator".to_string()),
+                ..Default::default()
+            },
+        )
         .and_then(|_| {
             register_password(
                 handler,
@@ -75,31 +93,105 @@ async fn create_admin_user(handler: &SqlBackendHandler, config: &Configuration) 
         .await
         .context("Error creating admin user")?;
     let groups = handler
-        .list_groups(Some(GroupRequestFilter::DisplayName("lldap_admin".into())))
+        .list_groups(
+            context,
+            ListGroupsRequest {
+                filter: Some(GroupRequestFilter::DisplayName("lldap_admin".into())),
+            },
+        )
         .await?;
     assert_eq!(groups.len(), 1);
     handler
-        .add_user_to_group(&config.ldap_user_dn, groups[0].id)
+        .add_user_to_group(
+            context,
+            AddUserToGroupRequest {
+                user_id: config.ldap_user_dn.clone(),
+                group_id: groups[0].id,
+            },
+        )
         .await
         .context("Error adding admin user to group")
 }
 
-async fn ensure_group_exists(handler: &SqlBackendHandler, group_name: &str) -> Result<()> {
+async fn ensure_group_exists<Handler: BackendHandler>(
+    handler: &Handler,
+    group_name: &str,
+    context: &RequestContext,
+) -> Result<()> {
     if handler
-        .list_groups(Some(GroupRequestFilter::DisplayName(group_name.into())))
+        .list_groups(
+            context,
+            ListGroupsRequest {
+                filter: Some(GroupRequestFilter::DisplayName(group_name.into())),
+            },
+        )
         .await?
         .is_empty()
     {
         warn!("Could not find {} group, trying to create it", group_name);
         handler
-            .create_group(CreateGroupRequest {
-                display_name: group_name.into(),
-                ..Default::default()
-            })
+            .create_group(
+                context,
+                CreateGroupRequest {
+                    display_name: group_name.into(),
+                    ..Default::default()
+                },
+            )
             .await
             .context(format!("while creating {} group", group_name))?;
     }
     Ok(())
+}
+
+async fn setup_plugin_handler(
+    config: Configuration,
+    sql_pool: DatabaseConnection,
+) -> Result<PluginBackendHandler> {
+    let plugin_configs: Vec<PluginConfig> = config
+        .plugins
+        .iter()
+        .filter(|p| p.1.enabled)
+        .map(|p| {
+            match PluginConfig::from_file(
+                p.1.plugin_path.clone(),
+                p.1.kvscope.clone(),
+                p.1.permissions.clone(),
+                p.1.config.clone(),
+            ) {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    debug!(
+                        "Failed to load plugin: {:#?}. Error: {}",
+                        p.1.plugin_path, e
+                    );
+                    None
+                }
+            }
+        })
+        .flatten()
+        .collect::<Vec<PluginConfig>>();
+    let num_expected_plugins = config.plugins.iter().filter(|p| p.1.enabled).count();
+    if plugin_configs.len() != num_expected_plugins {
+        // We bail if we can't load all plugins. We may be depending on
+        // plugins maintaining consistencies in data.
+        bail!("Failed to load all configured plugins.");
+    }
+    let plugin_kv_store = PluginKeyValueStore::new(sql_pool.clone());
+    match PluginHandler::new(plugin_configs, plugin_kv_store) {
+        Ok(plugin_handler) => {
+            let backend_handler = SqlBackendHandler::new(config.clone(), sql_pool.clone());
+            let plugin_backend_handler =
+                PluginBackendHandler::new(&backend_handler, plugin_handler);
+            // Initialize the plugins, ensure they were succesful
+            if let Err(e) = plugin_backend_handler.initialize_plugins().await {
+                bail!("A plugin failed to initialize. Exiting. Error: {}", e)
+            }
+            Ok(plugin_backend_handler)
+        }
+        Err(e) => {
+            bail!("Failed to prepare plugin handler. {:#?}", e);
+        }
+    }
 }
 
 async fn setup_sql_tables(database_url: &DatabaseUrl) -> Result<DatabaseConnection> {
@@ -152,15 +244,20 @@ async fn set_up_server(config: Configuration) -> Result<ServerBuilder> {
             return Err(anyhow!("The private key encoding the passwords has changed since last successful startup. Changing the private key will invalidate all existing passwords. If you want to proceed, restart the server with the CLI arg --force-update-private-key=true or the env variable LLDAP_FORCE_UPDATE_PRIVATE_KEY=true. You probably also want --force-ldap-user-pass-reset / LLDAP_FORCE_LDAP_USER_PASS_RESET=true to reset the admin password to the value in the configuration.").context(e));
         }
     }
-    let backend_handler =
-        SqlBackendHandler::new(config.get_server_setup().clone(), sql_pool.clone());
-    ensure_group_exists(&backend_handler, "lldap_admin").await?;
-    ensure_group_exists(&backend_handler, "lldap_password_manager").await?;
-    ensure_group_exists(&backend_handler, "lldap_strict_readonly").await?;
-    let admin_present = if let Ok(admins) = backend_handler
+    // Load plugin configs from configuration file
+    let plugin_backend_handler = setup_plugin_handler(config.clone(), sql_pool.clone()).await?;
+    // Ensure basic groups and users are present
+    let context = RequestContext::empty();
+    ensure_group_exists(&plugin_backend_handler, "lldap_admin", &context).await?;
+    ensure_group_exists(&plugin_backend_handler, "lldap_password_manager", &context).await?;
+    ensure_group_exists(&plugin_backend_handler, "lldap_strict_readonly", &context).await?;
+    let admin_present = if let Ok(admins) = plugin_backend_handler
         .list_users(
-            Some(UserRequestFilter::MemberOf("lldap_admin".into())),
-            false,
+            &context,
+            ListUsersRequest {
+                filter: Some(UserRequestFilter::MemberOf("lldap_admin".into())),
+                need_groups: false,
+            },
         )
         .await
     {
@@ -172,7 +269,7 @@ async fn set_up_server(config: Configuration) -> Result<ServerBuilder> {
         warn!(
             "Could not find an admin user, trying to create the user \"admin\" with the config-provided password"
         );
-        create_admin_user(&backend_handler, &config)
+        create_admin_user(&plugin_backend_handler, &config, &context)
             .await
             .map_err(|e| anyhow!("Error setting up admin login/account: {:#}", e))
             .context("while creating the admin user")?;
@@ -186,7 +283,7 @@ async fn set_up_server(config: Configuration) -> Result<ServerBuilder> {
             span!(Level::INFO, "Resetting admin password")
         };
         register_password(
-            &backend_handler,
+            &plugin_backend_handler,
             config.ldap_user_dn.clone(),
             config
                 .ldap_user_pass
@@ -207,13 +304,15 @@ async fn set_up_server(config: Configuration) -> Result<ServerBuilder> {
     }
     let server_builder = ldap_server::build_ldap_server(
         &config,
-        backend_handler.clone(),
+        plugin_backend_handler.clone(),
+        plugin_backend_handler.clone(),
         actix_server::Server::build(),
     )
     .context("while binding the LDAP server")?;
-    let server_builder = tcp_server::build_tcp_server(&config, backend_handler, server_builder)
-        .await
-        .context("while binding the TCP server")?;
+    let server_builder =
+        infra::tcp_server::build_tcp_server(&config, plugin_backend_handler, server_builder)
+            .await
+            .context("while binding the TCP server")?;
     // Run every hour.
     let scheduler = Scheduler::new("0 0 * * * * *", sql_pool);
     scheduler.start();

@@ -8,20 +8,24 @@ use lldap_access_control::{
 use lldap_domain::{
     deserialize::deserialize_attribute_value,
     public_schema::PublicSchema,
-    requests::{
-        CreateAttributeRequest, CreateGroupRequest, CreateUserRequest, UpdateGroupRequest,
-        UpdateUserRequest,
-    },
     schema::AttributeList,
     types::{
         Attribute as DomainAttribute, AttributeName, AttributeType, Email, GroupId,
         LdapObjectClass, UserId,
     },
 };
-use lldap_domain_handlers::handler::BackendHandler;
 use lldap_validation::attributes::{ALLOWED_CHARACTERS_DESCRIPTION, validate_attribute_name};
 use std::{collections::BTreeMap, sync::Arc};
 use tracing::{Instrument, Span, debug, debug_span};
+use lldap_domain_handlers::{
+    handler::BackendHandler,
+    requests::{
+        AddUserToGroupRequest, CreateAttributeRequest, CreateGroupRequest, CreateUserRequest,
+        RemoveUserFromGroupRequest, UpdateGroupRequest, UpdateUserRequest,
+    },
+};
+use lldap_validation::attributes::{validate_attribute_name, ALLOWED_CHARACTERS_DESCRIPTION};
+use tracing::{debug, debug_span, Instrument, Span};
 
 #[derive(PartialEq, Eq, Debug)]
 /// The top-level GraphQL mutation type.
@@ -232,8 +236,9 @@ impl<Handler: BackendHandler> Mutation<Handler> {
         let handler = context
             .get_admin_handler()
             .ok_or_else(field_error_callback(&span, "Unauthorized user creation"))?;
+        let request_context = context.get_request_context();
         let user_id = UserId::new(&user.id);
-        let schema = handler.get_schema().await?;
+        let schema = handler.get_schema(&request_context).await?;
         let consolidated_attributes = consolidate_attributes(
             user.attributes.unwrap_or_default(),
             user.first_name,
@@ -246,19 +251,25 @@ impl<Handler: BackendHandler> Mutation<Handler> {
             attributes,
         } = unpack_attributes(consolidated_attributes, &schema, true)?;
         handler
-            .create_user(CreateUserRequest {
-                user_id: user_id.clone(),
-                email: user
-                    .email
-                    .map(Email::from)
-                    .or(email)
-                    .ok_or_else(|| anyhow!("Email is required when creating a new user"))?,
-                display_name: user.display_name.or(display_name),
-                attributes,
-            })
+            .create_user(
+                &request_context,
+                CreateUserRequest {
+                    user_id: user_id.clone(),
+                    email: user
+                        .email
+                        .map(Email::from)
+                        .or(email)
+                        .ok_or_else(|| anyhow!("Email is required when creating a new user"))?,
+                    display_name: user.display_name.or(display_name),
+                    attributes,
+                },
+            )
             .instrument(span.clone())
             .await?;
-        let user_details = handler.get_user_details(&user_id).instrument(span).await?;
+        let user_details = handler
+            .get_user_details(&request_context, user_id)
+            .instrument(span)
+            .await?;
         super::query::User::<Handler>::from_user(user_details, Arc::new(schema))
     }
 
@@ -304,7 +315,8 @@ impl<Handler: BackendHandler> Mutation<Handler> {
             .get_writeable_handler(&user_id)
             .ok_or_else(field_error_callback(&span, "Unauthorized user update"))?;
         let is_admin = context.validation_result.is_admin();
-        let schema = handler.get_schema().await?;
+        let request_context = context.get_request_context();
+        let schema = handler.get_schema(&request_context).await?;
         // Consolidate attributes and fields into a combined attribute list
         let consolidated_attributes = consolidate_attributes(
             user.insert_attributes.unwrap_or_default(),
@@ -334,17 +346,20 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 .map(|_| String::new())
         });
         handler
-            .update_user(UpdateUserRequest {
-                user_id,
-                email: user.email.map(Into::into).or(email),
-                display_name: user.display_name.or(display_name),
-                delete_attributes: delete_attributes
-                    .into_iter()
-                    .filter(|attr| attr != "mail" && attr != "display_name")
-                    .map(Into::into)
-                    .collect(),
-                insert_attributes,
-            })
+            .update_user(
+                &request_context,
+                UpdateUserRequest {
+                    user_id,
+                    email: user.email.map(Into::into).or(email),
+                    display_name: user.display_name.or(display_name),
+                    delete_attributes: delete_attributes
+                        .into_iter()
+                        .filter(|attr| attr != "mail" && attr != "display_name")
+                        .map(Into::into)
+                        .collect(),
+                    insert_attributes,
+                },
+            )
             .instrument(span)
             .await?;
         Ok(Success::new())
@@ -361,6 +376,7 @@ impl<Handler: BackendHandler> Mutation<Handler> {
         let handler = context
             .get_admin_handler()
             .ok_or_else(field_error_callback(&span, "Unauthorized group update"))?;
+        let request_context = context.get_request_context();
         let new_display_name = group.display_name.clone().or_else(|| {
             group.insert_attributes.as_ref().and_then(|a| {
                 a.iter()
@@ -372,7 +388,7 @@ impl<Handler: BackendHandler> Mutation<Handler> {
             span.in_scope(|| debug!("Cannot change lldap_admin group name"));
             return Err("Cannot change lldap_admin group name".into());
         }
-        let schema = handler.get_schema().await?;
+        let schema = handler.get_schema(&request_context).await?;
         let insert_attributes = group
             .insert_attributes
             .unwrap_or_default()
@@ -381,18 +397,21 @@ impl<Handler: BackendHandler> Mutation<Handler> {
             .map(|attr| deserialize_attribute(&schema.get_schema().group_attributes, attr, true))
             .collect::<Result<Vec<_>, _>>()?;
         handler
-            .update_group(UpdateGroupRequest {
-                group_id: GroupId(group.id),
-                display_name: new_display_name.map(|s| s.as_str().into()),
-                delete_attributes: group
-                    .remove_attributes
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(|attr| attr != "display_name")
-                    .map(Into::into)
-                    .collect(),
-                insert_attributes,
-            })
+            .update_group(
+                &request_context,
+                UpdateGroupRequest {
+                    group_id: GroupId(group.id),
+                    display_name: new_display_name.map(|s| s.as_str().into()),
+                    delete_attributes: group
+                        .remove_attributes
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|attr| attr != "display_name")
+                        .map(Into::into)
+                        .collect(),
+                    insert_attributes,
+                },
+            )
             .instrument(span)
             .await?;
         Ok(Success::new())
@@ -413,8 +432,12 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 &span,
                 "Unauthorized group membership modification",
             ))?;
+        let request = AddUserToGroupRequest {
+            user_id: UserId::new(&user_id),
+            group_id: GroupId(group_id),
+        };
         handler
-            .add_user_to_group(&UserId::new(&user_id), GroupId(group_id))
+            .add_user_to_group(&context.get_request_context(), request)
             .instrument(span)
             .await?;
         Ok(Success::new())
@@ -440,8 +463,12 @@ impl<Handler: BackendHandler> Mutation<Handler> {
             span.in_scope(|| debug!("Cannot remove admin rights for current user"));
             return Err("Cannot remove admin rights for current user".into());
         }
+        let request = RemoveUserFromGroupRequest {
+            user_id,
+            group_id: GroupId(group_id),
+        };
         handler
-            .remove_user_from_group(&user_id, GroupId(group_id))
+            .remove_user_from_group(&context.get_request_context(), request)
             .instrument(span)
             .await?;
         Ok(Success::new())
@@ -460,7 +487,10 @@ impl<Handler: BackendHandler> Mutation<Handler> {
             span.in_scope(|| debug!("Cannot delete current user"));
             return Err("Cannot delete current user".into());
         }
-        handler.delete_user(&user_id).instrument(span).await?;
+        handler
+            .delete_user(&context.get_request_context(), user_id)
+            .instrument(span)
+            .await?;
         Ok(Success::new())
     }
 
@@ -477,7 +507,7 @@ impl<Handler: BackendHandler> Mutation<Handler> {
             return Err("Cannot delete admin group".into());
         }
         handler
-            .delete_group(GroupId(group_id))
+            .delete_group(&context.get_request_context(), GroupId(group_id))
             .instrument(span)
             .await?;
         Ok(Success::new())
@@ -518,13 +548,16 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 "Unauthorized attribute creation",
             ))?;
         handler
-            .add_user_attribute(CreateAttributeRequest {
-                name: name.into(),
-                attribute_type,
-                is_list,
-                is_visible,
-                is_editable,
-            })
+            .add_user_attribute(
+                &context.get_request_context(),
+                CreateAttributeRequest {
+                    name: name.into(),
+                    attribute_type,
+                    is_list,
+                    is_visible,
+                    is_editable,
+                },
+            )
             .instrument(span)
             .await?;
         Ok(Success::new())
@@ -563,13 +596,16 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 "Unauthorized attribute creation",
             ))?;
         handler
-            .add_group_attribute(CreateAttributeRequest {
-                name: name.into(),
-                attribute_type,
-                is_list,
-                is_visible,
-                is_editable,
-            })
+            .add_group_attribute(
+                &context.get_request_context(),
+                CreateAttributeRequest {
+                    name: name.into(),
+                    attribute_type,
+                    is_list,
+                    is_visible,
+                    is_editable,
+                },
+            )
             .instrument(span)
             .await?;
         Ok(Success::new())
@@ -590,7 +626,8 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 &span,
                 "Unauthorized attribute deletion",
             ))?;
-        let schema = handler.get_schema().await?;
+        let request_context = context.get_request_context();
+        let schema = handler.get_schema(&request_context).await?;
         let attribute_schema = schema
             .get_schema()
             .user_attributes
@@ -600,7 +637,7 @@ impl<Handler: BackendHandler> Mutation<Handler> {
             return Err(anyhow!("Permission denied: Attribute {} cannot be deleted", &name).into());
         }
         handler
-            .delete_user_attribute(&name)
+            .delete_user_attribute(&request_context, name)
             .instrument(span)
             .await?;
         Ok(Success::new())
@@ -621,7 +658,8 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 &span,
                 "Unauthorized attribute deletion",
             ))?;
-        let schema = handler.get_schema().await?;
+        let request_context = context.get_request_context();
+        let schema = handler.get_schema(&request_context).await?;
         let attribute_schema = schema
             .get_schema()
             .group_attributes
@@ -631,7 +669,7 @@ impl<Handler: BackendHandler> Mutation<Handler> {
             return Err(anyhow!("Permission denied: Attribute {} cannot be deleted", &name).into());
         }
         handler
-            .delete_group_attribute(&name)
+            .delete_group_attribute(&request_context, name)
             .instrument(span)
             .await?;
         Ok(Success::new())
@@ -652,7 +690,7 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 "Unauthorized object class addition",
             ))?;
         handler
-            .add_user_object_class(&LdapObjectClass::from(name))
+            .add_user_object_class(&context.get_request_context(), LdapObjectClass::from(name))
             .instrument(span)
             .await?;
         Ok(Success::new())
@@ -673,7 +711,7 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 "Unauthorized object class addition",
             ))?;
         handler
-            .add_group_object_class(&LdapObjectClass::from(name))
+            .add_group_object_class(&context.get_request_context(), LdapObjectClass::from(name))
             .instrument(span)
             .await?;
         Ok(Success::new())
@@ -694,7 +732,7 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 "Unauthorized object class deletion",
             ))?;
         handler
-            .delete_user_object_class(&LdapObjectClass::from(name))
+            .delete_user_object_class(&context.get_request_context(), LdapObjectClass::from(name))
             .instrument(span)
             .await?;
         Ok(Success::new())
@@ -715,7 +753,7 @@ impl<Handler: BackendHandler> Mutation<Handler> {
                 "Unauthorized object class deletion",
             ))?;
         handler
-            .delete_group_object_class(&LdapObjectClass::from(name))
+            .delete_group_object_class(&context.get_request_context(), LdapObjectClass::from(name))
             .instrument(span)
             .await?;
         Ok(Success::new())
@@ -730,7 +768,8 @@ async fn create_group_with_details<Handler: BackendHandler>(
     let handler = context
         .get_admin_handler()
         .ok_or_else(field_error_callback(&span, "Unauthorized group creation"))?;
-    let schema = handler.get_schema().await?;
+    let request_context = context.get_request_context();
+    let schema = handler.get_schema(&request_context).await?;
     let attributes = request
         .attributes
         .unwrap_or_default()
@@ -741,8 +780,11 @@ async fn create_group_with_details<Handler: BackendHandler>(
         display_name: request.display_name.into(),
         attributes,
     };
-    let group_id = handler.create_group(request).await?;
-    let group_details = handler.get_group_details(group_id).instrument(span).await?;
+    let group_id = handler.create_group(&request_context, request).await?;
+    let group_details = handler
+        .get_group_details(&request_context, group_id)
+        .instrument(span)
+        .await?;
     super::query::Group::<Handler>::from_group_details(group_details, Arc::new(schema))
 }
 
@@ -792,6 +834,7 @@ mod tests {
     use lldap_auth::access_control::{Permission, ValidationResults};
     use lldap_domain::types::{AttributeName, AttributeType};
     use lldap_test_utils::MockTestBackendHandler;
+    use lldap_domain_handlers::handler::RequestContext;
     use mockall::predicate::eq;
     use pretty_assertions::assert_eq;
 
@@ -816,22 +859,24 @@ mod tests {
             }
         "#;
         let mut mock = MockTestBackendHandler::new();
+        let credentials = ValidationResults {
+            user: UserId::new("bob"),
+            permission: Permission::Admin,
+        };
+        let context = RequestContext::new(Some(credentials.clone()));
         mock.expect_add_user_attribute()
-            .with(eq(CreateAttributeRequest {
-                name: AttributeName::new("AttrName0"),
-                attribute_type: AttributeType::String,
-                is_list: false,
-                is_visible: false,
-                is_editable: false,
-            }))
-            .return_once(|_| Ok(()));
-        let context = Context::<MockTestBackendHandler>::new_for_tests(
-            mock,
-            ValidationResults {
-                user: UserId::new("bob"),
-                permission: Permission::Admin,
-            },
-        );
+            .with(
+                eq(context.clone()),
+                eq(CreateAttributeRequest {
+                    name: AttributeName::new("AttrName0"),
+                    attribute_type: AttributeType::String,
+                    is_list: false,
+                    is_visible: false,
+                    is_editable: false,
+                }),
+            )
+            .return_once(|_, _| Ok(()));
+        let context = Context::<MockTestBackendHandler>::new_for_tests(mock, credentials);
         let vars = Variables::from([
             ("name".to_string(), InputValue::scalar("AttrName0")),
             (
@@ -921,22 +966,24 @@ mod tests {
             }
         "#;
         let mut mock = MockTestBackendHandler::new();
+        let credentials = ValidationResults {
+            user: UserId::new("bob"),
+            permission: Permission::Admin,
+        };
+        let context = RequestContext::new(Some(credentials.clone()));
         mock.expect_add_group_attribute()
-            .with(eq(CreateAttributeRequest {
-                name: AttributeName::new("AttrName0"),
-                attribute_type: AttributeType::String,
-                is_list: false,
-                is_visible: false,
-                is_editable: false,
-            }))
-            .return_once(|_| Ok(()));
-        let context = Context::<MockTestBackendHandler>::new_for_tests(
-            mock,
-            ValidationResults {
-                user: UserId::new("bob"),
-                permission: Permission::Admin,
-            },
-        );
+            .with(
+                eq(context.clone()),
+                eq(CreateAttributeRequest {
+                    name: AttributeName::new("AttrName0"),
+                    attribute_type: AttributeType::String,
+                    is_list: false,
+                    is_visible: false,
+                    is_editable: false,
+                }),
+            )
+            .return_once(|_, _| Ok(()));
+        let context = Context::<MockTestBackendHandler>::new_for_tests(mock, credentials);
         let vars = Variables::from([
             ("name".to_string(), InputValue::scalar("AttrName0")),
             (

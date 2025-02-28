@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use base64::Engine;
 use lldap_auth::opaque;
 use lldap_domain::types::UserId;
-use lldap_domain_handlers::handler::{BindRequest, LoginHandler};
+use lldap_domain_handlers::handler::{BindRequest, LoginHandler, RequestContext};
 use lldap_domain_model::{
     error::{DomainError, Result},
     model::{self, UserColumn},
@@ -12,8 +12,6 @@ use lldap_opaque_handler::{OpaqueHandler, login, registration};
 use sea_orm::{ActiveModelTrait, ActiveValue, EntityTrait, QuerySelect};
 use secstr::SecUtf8;
 use tracing::{debug, info, instrument, warn};
-
-type SqlOpaqueHandler = SqlBackendHandler;
 
 #[instrument(skip_all, level = "debug", err, fields(username = %username.as_str()))]
 fn passwords_match(
@@ -65,7 +63,7 @@ impl SqlBackendHandler {
 #[async_trait]
 impl LoginHandler for SqlBackendHandler {
     #[instrument(skip_all, level = "debug", err)]
-    async fn bind(&self, request: BindRequest) -> Result<()> {
+    async fn bind(&self, _context: &RequestContext, request: BindRequest) -> Result<()> {
         if let Some(password_hash) = self
             .get_password_file_for_user(request.name.clone())
             .await?
@@ -95,7 +93,7 @@ impl LoginHandler for SqlBackendHandler {
 }
 
 #[async_trait]
-impl OpaqueHandler for SqlOpaqueHandler {
+impl OpaqueHandler for SqlBackendHandler {
     #[instrument(skip_all, level = "debug", err)]
     async fn login_start(
         &self,
@@ -210,8 +208,8 @@ impl OpaqueHandler for SqlOpaqueHandler {
 
 /// Convenience function to set a user's password.
 #[instrument(skip_all, level = "debug", err, fields(username = %username.as_str()))]
-pub async fn register_password(
-    opaque_handler: &SqlOpaqueHandler,
+pub(crate) async fn register_password<A: OpaqueHandler>(
+    opaque_handler: &A,
     username: UserId,
     password: &SecUtf8,
 ) -> Result<()> {
@@ -247,8 +245,8 @@ mod tests {
         get_initialized_db, insert_user, insert_user_no_password,
     };
 
-    async fn attempt_login(
-        opaque_handler: &SqlOpaqueHandler,
+    async fn attempt_login<A: OpaqueHandler>(
+        opaque_handler: &A,
         username: &str,
         password: &str,
     ) -> Result<()> {
@@ -278,10 +276,12 @@ mod tests {
     async fn test_opaque_flow() -> Result<()> {
         let sql_pool = get_initialized_db().await;
         crate::logging::init_for_tests();
-        let backend_handler = SqlBackendHandler::new(generate_random_private_key(), sql_pool);
-        insert_user_no_password(&backend_handler, "bob").await;
-        insert_user_no_password(&backend_handler, "john").await;
-        attempt_login(&backend_handler, "bob", "bob00")
+        let context = RequestContext::empty();
+        let backend_handler = SqlBackendHandler::new(generate_random_private_key(), sql_pool.clone());
+        let opaque_handler = SqlBackendHandler::new(generate_random_private_key(), sql_pool);
+        insert_user_no_password(&context, &backend_handler, "bob").await;
+        insert_user_no_password(&context, &backend_handler, "john").await;
+        attempt_login(&opaque_handler, "bob", "bob00")
             .await
             .unwrap_err();
         register_password(
@@ -300,28 +300,38 @@ mod tests {
     #[tokio::test]
     async fn test_bind_user() {
         let sql_pool = get_initialized_db().await;
+        let context = RequestContext::empty();
         let handler = SqlOpaqueHandler::new(generate_random_private_key(), sql_pool.clone());
-        insert_user(&handler, "bob", "bob00").await;
+        insert_user(&context, &handler, "bob", "bob00").await;
 
         handler
-            .bind(BindRequest {
-                name: UserId::new("bob"),
-                password: "bob00".to_string(),
-            })
+            .bind(
+                &context,
+                BindRequest {
+                    name: UserId::new("bob"),
+                    password: "bob00".to_string(),
+                },
+            )
             .await
             .unwrap();
         handler
-            .bind(BindRequest {
-                name: UserId::new("andrew"),
-                password: "bob00".to_string(),
-            })
+            .bind(
+                &context,
+                BindRequest {
+                    name: UserId::new("andrew"),
+                    password: "bob00".to_string(),
+                },
+            )
             .await
             .unwrap_err();
         handler
-            .bind(BindRequest {
-                name: UserId::new("bob"),
-                password: "wrong_password".to_string(),
-            })
+            .bind(
+                &context,
+                BindRequest {
+                    name: UserId::new("bob"),
+                    password: "wrong_password".to_string(),
+                },
+            )
             .await
             .unwrap_err();
     }
@@ -329,14 +339,18 @@ mod tests {
     #[tokio::test]
     async fn test_user_no_password() {
         let sql_pool = get_initialized_db().await;
+        let context = RequestContext::empty();
         let handler = SqlBackendHandler::new(generate_random_private_key(), sql_pool.clone());
-        insert_user_no_password(&handler, "bob").await;
+        insert_user_no_password(&context, &handler, "bob").await;
 
         handler
-            .bind(BindRequest {
-                name: UserId::new("bob"),
-                password: "bob00".to_string(),
-            })
+            .bind(
+                &context,
+                BindRequest {
+                    name: UserId::new("bob"),
+                    password: "bob00".to_string(),
+                },
+            )
             .await
             .unwrap_err();
     }

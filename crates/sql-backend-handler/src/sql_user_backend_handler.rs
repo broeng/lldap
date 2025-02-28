@@ -1,11 +1,17 @@
 use crate::sql_backend_handler::SqlBackendHandler;
 use async_trait::async_trait;
-use lldap_domain::{
-    requests::{CreateUserRequest, UpdateUserRequest},
-    types::{AttributeName, GroupDetails, GroupId, Serialized, User, UserAndGroups, UserId, Uuid},
+use lldap_domain::types::{
+    AttributeName, GroupDetails, Serialized, User, UserAndGroups, UserId, Uuid,
 };
-use lldap_domain_handlers::handler::{
-    ReadSchemaBackendHandler, UserBackendHandler, UserListerBackendHandler, UserRequestFilter,
+use lldap_domain_handlers::{
+    handler::{
+        ReadSchemaBackendHandler, RequestContext, UserBackendHandler, UserListerBackendHandler,
+        UserRequestFilter,
+    },
+    requests::{
+        AddUserToGroupRequest, CreateUserRequest, ListUsersRequest, RemoveUserFromGroupRequest,
+        UpdateUserRequest,
+    },
 };
 use lldap_domain_model::{
     error::{DomainError, Result},
@@ -126,11 +132,12 @@ impl UserListerBackendHandler for SqlBackendHandler {
     #[instrument(skip(self), level = "debug", ret, err)]
     async fn list_users(
         &self,
-        filters: Option<UserRequestFilter>,
+        context: &RequestContext,
         // To simplify the query, we always fetch groups. TODO: cleanup.
-        _get_groups: bool,
+        filters: ListUsersRequest,
     ) -> Result<Vec<UserAndGroups>> {
         let filters = filters
+            .filter
             .map(get_user_filter_expr)
             .unwrap_or_else(|| SimpleExpr::Value(true.into()).into_condition());
         let mut users: Vec<_> = model::User::find()
@@ -167,7 +174,7 @@ impl UserListerBackendHandler for SqlBackendHandler {
         let mut attributes_iter = attributes.into_iter().peekable();
         // TODO: should be wrapped in a transaction
         use itertools::Itertools; // For take_while_ref
-        let schema = self.get_schema().await?;
+        let schema = self.get_schema(context).await?;
         for user in users.iter_mut() {
             user.user.attributes = attributes_iter
                 .take_while_ref(|u| u.user_id == user.user.user_id)
@@ -273,7 +280,7 @@ impl SqlBackendHandler {
 #[async_trait]
 impl UserBackendHandler for SqlBackendHandler {
     #[instrument(skip_all, level = "debug", ret, fields(user_id = ?user_id.as_str()))]
-    async fn get_user_details(&self, user_id: &UserId) -> Result<User> {
+    async fn get_user_details(&self, context: &RequestContext, user_id: UserId) -> Result<User> {
         let mut user = User::from(
             model::User::find_by_id(user_id.to_owned())
                 .one(&self.sql_pool)
@@ -285,7 +292,7 @@ impl UserBackendHandler for SqlBackendHandler {
             .order_by_asc(model::UserAttributesColumn::AttributeName)
             .all(&self.sql_pool)
             .await?;
-        let schema = self.get_schema().await?;
+        let schema = self.get_schema(context).await?;
         user.attributes = attributes
             .into_iter()
             .map(|a| {
@@ -300,7 +307,11 @@ impl UserBackendHandler for SqlBackendHandler {
     }
 
     #[instrument(skip_all, level = "debug", ret, err, fields(user_id = ?user_id.as_str()))]
-    async fn get_user_groups(&self, user_id: &UserId) -> Result<HashSet<GroupDetails>> {
+    async fn get_user_groups(
+        &self,
+        _context: &RequestContext,
+        user_id: UserId,
+    ) -> Result<HashSet<GroupDetails>> {
         let user = model::User::find_by_id(user_id.to_owned())
             .one(&self.sql_pool)
             .await?
@@ -315,7 +326,11 @@ impl UserBackendHandler for SqlBackendHandler {
     }
 
     #[instrument(skip(self), level = "debug", err, fields(user_id = ?request.user_id.as_str()))]
-    async fn create_user(&self, request: CreateUserRequest) -> Result<()> {
+    async fn create_user(
+        &self,
+        context: &RequestContext,
+        request: CreateUserRequest,
+    ) -> Result<()> {
         let now = chrono::Utc::now().naive_utc();
         let uuid = Uuid::from_name_and_date(request.user_id.as_str(), &now);
         let lower_email = request.email.as_str().to_lowercase();
@@ -365,8 +380,12 @@ impl UserBackendHandler for SqlBackendHandler {
         Ok(())
     }
 
-    #[instrument(skip(self), level = "debug", err, fields(user_id = ?request.user_id.as_str()))]
-    async fn update_user(&self, request: UpdateUserRequest) -> Result<()> {
+    #[instrument(skip(self, _context), level = "debug", err, fields(user_id = ?request.user_id.as_str()))]
+    async fn update_user(
+        &self,
+        _context: &RequestContext,
+        request: UpdateUserRequest,
+    ) -> Result<()> {
         self.sql_pool
             .transaction::<_, (), DomainError>(|transaction| {
                 Box::pin(
@@ -378,7 +397,7 @@ impl UserBackendHandler for SqlBackendHandler {
     }
 
     #[instrument(skip_all, level = "debug", err, fields(user_id = ?user_id.as_str()))]
-    async fn delete_user(&self, user_id: &UserId) -> Result<()> {
+    async fn delete_user(&self, _context: &RequestContext, user_id: UserId) -> Result<()> {
         let res = model::User::delete_by_id(user_id.clone())
             .exec(&self.sql_pool)
             .await?;
@@ -391,25 +410,33 @@ impl UserBackendHandler for SqlBackendHandler {
         Ok(())
     }
 
-    #[instrument(skip_all, level = "debug", err, fields(user_id = ?user_id.as_str(), group_id))]
-    async fn add_user_to_group(&self, user_id: &UserId, group_id: GroupId) -> Result<()> {
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?request.user_id.as_str(), request.group_id))]
+    async fn add_user_to_group(
+        &self,
+        _context: &RequestContext,
+        request: AddUserToGroupRequest,
+    ) -> Result<()> {
         let new_membership = model::memberships::ActiveModel {
-            user_id: ActiveValue::Set(user_id.clone()),
-            group_id: ActiveValue::Set(group_id),
+            user_id: ActiveValue::Set(request.user_id.clone()),
+            group_id: ActiveValue::Set(request.group_id),
         };
         new_membership.insert(&self.sql_pool).await?;
         Ok(())
     }
 
-    #[instrument(skip_all, level = "debug", err, fields(user_id = ?user_id.as_str(), group_id))]
-    async fn remove_user_from_group(&self, user_id: &UserId, group_id: GroupId) -> Result<()> {
-        let res = model::Membership::delete_by_id((user_id.clone(), group_id))
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?request.user_id.as_str(), request.group_id))]
+    async fn remove_user_from_group(
+        &self,
+        _context: &RequestContext,
+        request: RemoveUserFromGroupRequest,
+    ) -> Result<()> {
+        let res = model::Membership::delete_by_id((request.user_id.clone(), request.group_id))
             .exec(&self.sql_pool)
             .await?;
         if res.rows_affected == 0 {
             return Err(DomainError::EntityNotFound(format!(
                 "No such membership: '{}' -> {:?}",
-                user_id, group_id
+                request.user_id, request.group_id
             )));
         }
         Ok(())
@@ -421,15 +448,15 @@ mod tests {
     use super::*;
     use crate::sql_backend_handler::tests::*;
     use lldap_auth::opaque::server::generate_random_private_key;
-    use lldap_domain::types::{Attribute, JpegPhoto};
-    use lldap_domain_handlers::handler::SubStringFilter;
+    use lldap_domain::types::{Attribute, GroupId, JpegPhoto};
+    use lldap_domain_handlers::{handler::SubStringFilter, requests::ListUsersRequest};
     use lldap_domain_model::model::UserColumn;
     use pretty_assertions::{assert_eq, assert_ne};
 
     #[tokio::test]
     async fn test_list_users_no_filter() {
         let fixture = TestFixture::new().await;
-        let users = get_user_names(&fixture.handler, None).await;
+        let users = get_user_names(&RequestContext::empty(), &fixture.handler, None).await;
         assert_eq!(users, vec!["bob", "john", "nogroup", "patrick"]);
     }
 
@@ -437,6 +464,7 @@ mod tests {
     async fn test_list_users_user_id_filter() {
         let fixture = TestFixture::new().await;
         let users = get_user_names(
+            &RequestContext::empty(),
             &fixture.handler,
             Some(UserRequestFilter::UserId(UserId::new("bob"))),
         )
@@ -448,6 +476,7 @@ mod tests {
     async fn test_list_users_display_name_filter() {
         let fixture = TestFixture::new().await;
         let users = get_user_names(
+            &RequestContext::empty(),
             &fixture.handler,
             Some(UserRequestFilter::Equality(
                 UserColumn::DisplayName,
@@ -462,6 +491,7 @@ mod tests {
     async fn test_list_users_other_filter() {
         let fixture = TestFixture::new().await;
         let users = get_user_names(
+            &RequestContext::empty(),
             &fixture.handler,
             Some(UserRequestFilter::AttributeEquality(
                 AttributeName::from("first_name"),
@@ -475,15 +505,18 @@ mod tests {
     #[tokio::test]
     async fn test_list_users_email_filter_uppercase_email() {
         let fixture = TestFixture::new().await;
-        insert_user_no_password(&fixture.handler, "UppEr").await;
+        insert_user_no_password(&RequestContext::empty(), &fixture.handler, "UppEr").await;
         let users_and_emails = fixture
             .handler
             .list_users(
-                Some(UserRequestFilter::Equality(
-                    UserColumn::Email,
-                    "uPPer@bob.bob".to_string(),
-                )),
-                false,
+                &RequestContext::empty(),
+                ListUsersRequest {
+                    filter: Some(UserRequestFilter::Equality(
+                        UserColumn::Email,
+                        "uPPer@bob.bob".to_string(),
+                    )),
+                    need_groups: false,
+                },
             )
             .await
             .unwrap()
@@ -500,6 +533,7 @@ mod tests {
     async fn test_list_users_substring_filter() {
         let fixture = TestFixture::new().await;
         let users = get_user_names(
+            &RequestContext::empty(),
             &fixture.handler,
             Some(UserRequestFilter::And(vec![
                 UserRequestFilter::UserIdSubString(SubStringFilter {
@@ -524,7 +558,12 @@ mod tests {
     #[tokio::test]
     async fn test_list_users_false_filter() {
         let fixture = TestFixture::new().await;
-        let users = get_user_names(&fixture.handler, Some(UserRequestFilter::False)).await;
+        let users = get_user_names(
+            &RequestContext::empty(),
+            &fixture.handler,
+            Some(UserRequestFilter::False)
+        )
+        .await;
         assert_eq!(users, Vec::<String>::new());
     }
 
@@ -532,12 +571,14 @@ mod tests {
     async fn test_list_users_member_of() {
         let fixture = TestFixture::new().await;
         let users = get_user_names(
+            &RequestContext::empty(),
             &fixture.handler,
             Some(UserRequestFilter::MemberOf("Best Group".into())),
         )
         .await;
         assert_eq!(users, vec!["bob", "patrick"]);
         let users = get_user_names(
+            &RequestContext::empty(),
             &fixture.handler,
             Some(UserRequestFilter::MemberOf("best grOUp".into())),
         )
@@ -549,6 +590,7 @@ mod tests {
     async fn test_list_users_member_of_and_uuid() {
         let fixture = TestFixture::new().await;
         let users = get_user_names(
+            &RequestContext::empty(),
             &fixture.handler,
             Some(UserRequestFilter::Or(vec![
                 UserRequestFilter::MemberOf("Best Group".into()),
@@ -563,6 +605,7 @@ mod tests {
     async fn test_list_users_member_of_id() {
         let fixture = TestFixture::new().await;
         let users = get_user_names(
+            &RequestContext::empty(),
             &fixture.handler,
             Some(UserRequestFilter::MemberOfId(fixture.groups[0])),
         )
@@ -574,6 +617,7 @@ mod tests {
     async fn test_list_users_filter_several_member_of() {
         let fixture = TestFixture::new().await;
         let users = get_user_names(
+            &RequestContext::empty(),
             &fixture.handler,
             Some(UserRequestFilter::And(vec![
                 UserRequestFilter::MemberOf("Best Group".into()),
@@ -588,6 +632,7 @@ mod tests {
     async fn test_list_users_filter_several_member_of_id() {
         let fixture = TestFixture::new().await;
         let users = get_user_names(
+            &RequestContext::empty(),
             &fixture.handler,
             Some(UserRequestFilter::And(vec![
                 UserRequestFilter::MemberOfId(fixture.groups[0]),
@@ -603,6 +648,7 @@ mod tests {
     async fn test_list_users_invalid_userid_filter() {
         let fixture = TestFixture::new().await;
         get_user_names(
+            &RequestContext::empty(),
             &fixture.handler,
             Some(UserRequestFilter::Equality(
                 UserColumn::UserId,
@@ -616,6 +662,7 @@ mod tests {
     async fn test_list_users_filter_or() {
         let fixture = TestFixture::new().await;
         let users = get_user_names(
+            &RequestContext::empty(),
             &fixture.handler,
             Some(UserRequestFilter::Or(vec![
                 UserRequestFilter::UserId(UserId::new("bob")),
@@ -630,6 +677,7 @@ mod tests {
     async fn test_list_users_filter_many_or() {
         let fixture = TestFixture::new().await;
         let users = get_user_names(
+            &RequestContext::empty(),
             &fixture.handler,
             Some(UserRequestFilter::Or(vec![
                 UserRequestFilter::False,
@@ -648,6 +696,7 @@ mod tests {
     async fn test_list_users_filter_not() {
         let fixture = TestFixture::new().await;
         let users = get_user_names(
+            &RequestContext::empty(),
             &fixture.handler,
             Some(UserRequestFilter::Not(Box::new(UserRequestFilter::UserId(
                 UserId::new("bob"),
@@ -662,7 +711,7 @@ mod tests {
         let fixture = TestFixture::new().await;
         let users = fixture
             .handler
-            .list_users(None, true)
+            .list_users(&RequestContext::empty(), ListUsersRequest::empty())
             .await
             .unwrap()
             .into_iter()
@@ -710,7 +759,7 @@ mod tests {
         let fixture = TestFixture::new().await;
         let users = fixture
             .handler
-            .list_users(None, true)
+            .list_users(&RequestContext::empty(), ListUsersRequest::empty())
             .await
             .unwrap()
             .into_iter()
@@ -736,14 +785,17 @@ mod tests {
     async fn test_get_user_details() {
         let handler =
             SqlBackendHandler::new(generate_random_private_key(), get_initialized_db().await);
-        insert_user_no_password(&handler, "bob").await;
+        insert_user_no_password(&RequestContext::empty(), &handler, "bob").await;
         {
-            let user = handler.get_user_details(&UserId::new("bob")).await.unwrap();
+            let user = handler
+                .get_user_details(&RequestContext::empty(), UserId::new("bob"))
+                .await
+                .unwrap();
             assert_eq!(user.user_id.as_str(), "bob");
         }
         {
             handler
-                .get_user_details(&UserId::new("John"))
+                .get_user_details(&RequestContext::empty(), UserId::new("John"))
                 .await
                 .unwrap_err();
         }
@@ -753,14 +805,17 @@ mod tests {
     async fn test_user_lowercase() {
         let handler =
             SqlBackendHandler::new(generate_random_private_key(), get_initialized_db().await);
-        insert_user_no_password(&handler, "Bob").await;
+        insert_user_no_password(&RequestContext::empty(), &handler, "Bob").await;
         {
-            let user = handler.get_user_details(&UserId::new("bOb")).await.unwrap();
+            let user = handler
+                .get_user_details(&RequestContext::empty(), UserId::new("bOb"))
+                .await
+                .unwrap();
             assert_eq!(user.user_id.as_str(), "bob");
         }
         {
             handler
-                .get_user_details(&UserId::new("John"))
+                .get_user_details(&RequestContext::empty(), UserId::new("John"))
                 .await
                 .unwrap_err();
         }
@@ -771,30 +826,30 @@ mod tests {
         let fixture = TestFixture::new().await;
         fixture
             .handler
-            .delete_user(&UserId::new("bob"))
+            .delete_user(&RequestContext::empty(), UserId::new("bob"))
             .await
             .unwrap();
 
         assert_eq!(
-            get_user_names(&fixture.handler, None).await,
+            get_user_names(&RequestContext::empty(), &fixture.handler, None).await,
             vec!["john", "nogroup", "patrick"]
         );
 
         // Insert new user and remove two
-        insert_user_no_password(&fixture.handler, "NewBoi").await;
+        insert_user_no_password(&RequestContext::empty(), &fixture.handler, "NewBoi").await;
         fixture
             .handler
-            .delete_user(&UserId::new("nogroup"))
+            .delete_user(&RequestContext::empty(), UserId::new("nogroup"))
             .await
             .unwrap();
         fixture
             .handler
-            .delete_user(&UserId::new("NewBoi"))
+            .delete_user(&RequestContext::empty(), UserId::new("NewBoi"))
             .await
             .unwrap();
 
         assert_eq!(
-            get_user_names(&fixture.handler, None).await,
+            get_user_names(&RequestContext::empty(), &fixture.handler, None).await,
             vec!["john", "patrick"]
         );
     }
@@ -805,7 +860,7 @@ mod tests {
         let get_group_ids = async |user: &'static str| {
             let mut groups = fixture
                 .handler
-                .get_user_groups(&UserId::new(user))
+                .get_user_groups(&RequestContext::empty(), UserId::new(user))
                 .await
                 .unwrap()
                 .into_iter()
@@ -828,32 +883,35 @@ mod tests {
 
         fixture
             .handler
-            .update_user(UpdateUserRequest {
-                user_id: UserId::new("bob"),
-                email: Some("email".into()),
-                display_name: Some("display_name".to_string()),
-                delete_attributes: Vec::new(),
-                insert_attributes: vec![
-                    Attribute {
-                        name: "first_name".into(),
-                        value: "first_name".to_string().into(),
-                    },
-                    Attribute {
-                        name: "last_name".into(),
-                        value: "last_name".to_string().into(),
-                    },
-                    Attribute {
-                        name: "avatar".into(),
-                        value: JpegPhoto::for_tests().into(),
-                    },
-                ],
-            })
+            .update_user(
+                &RequestContext::empty(),
+                UpdateUserRequest {
+                    user_id: UserId::new("bob"),
+                    email: Some("email".into()),
+                    display_name: Some("display_name".to_string()),
+                    delete_attributes: Vec::new(),
+                    insert_attributes: vec![
+                        Attribute {
+                            name: "first_name".into(),
+                            value: "first_name".to_string().into(),
+                        },
+                        Attribute {
+                            name: "last_name".into(),
+                            value: "last_name".to_string().into(),
+                        },
+                        Attribute {
+                            name: "avatar".into(),
+                            value: JpegPhoto::for_tests().into(),
+                        },
+                    ],
+                },
+            )
             .await
             .unwrap();
 
         let user = fixture
             .handler
-            .get_user_details(&UserId::new("bob"))
+            .get_user_details(&RequestContext::empty(), UserId::new("bob"))
             .await
             .unwrap();
         assert_eq!(user.email, "email".into());
@@ -883,21 +941,24 @@ mod tests {
 
         fixture
             .handler
-            .update_user(UpdateUserRequest {
-                user_id: UserId::new("bob"),
-                delete_attributes: vec!["last_name".into()],
-                insert_attributes: vec![Attribute {
-                    name: "avatar".into(),
-                    value: JpegPhoto::for_tests().into(),
-                }],
-                ..Default::default()
-            })
+            .update_user(
+                &RequestContext::empty(),
+                UpdateUserRequest {
+                    user_id: UserId::new("bob"),
+                    delete_attributes: vec!["last_name".into()],
+                    insert_attributes: vec![Attribute {
+                        name: "avatar".into(),
+                        value: JpegPhoto::for_tests().into(),
+                    }],
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
 
         let user = fixture
             .handler
-            .get_user_details(&UserId::new("bob"))
+            .get_user_details(&RequestContext::empty(), UserId::new("bob"))
             .await
             .unwrap();
         assert_eq!(user.display_name.unwrap(), "display bob");
@@ -922,20 +983,23 @@ mod tests {
 
         fixture
             .handler
-            .update_user(UpdateUserRequest {
-                user_id: UserId::new("bob"),
-                insert_attributes: vec![Attribute {
-                    name: "first_name".into(),
-                    value: "new first".to_string().into(),
-                }],
-                ..Default::default()
-            })
+            .update_user(
+                &RequestContext::empty(),
+                UpdateUserRequest {
+                    user_id: UserId::new("bob"),
+                    insert_attributes: vec![Attribute {
+                        name: "first_name".into(),
+                        value: "new first".to_string().into(),
+                    }],
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
 
         let user = fixture
             .handler
-            .get_user_details(&UserId::new("bob"))
+            .get_user_details(&RequestContext::empty(), UserId::new("bob"))
             .await
             .unwrap();
         assert_eq!(
@@ -959,17 +1023,20 @@ mod tests {
 
         fixture
             .handler
-            .update_user(UpdateUserRequest {
-                user_id: UserId::new("bob"),
-                delete_attributes: vec!["first_name".into()],
-                ..Default::default()
-            })
+            .update_user(
+                &RequestContext::empty(),
+                UpdateUserRequest {
+                    user_id: UserId::new("bob"),
+                    delete_attributes: vec!["first_name".into()],
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
 
         let user = fixture
             .handler
-            .get_user_details(&UserId::new("bob"))
+            .get_user_details(&RequestContext::empty(), UserId::new("bob"))
             .await
             .unwrap();
         assert_eq!(
@@ -987,21 +1054,24 @@ mod tests {
 
         fixture
             .handler
-            .update_user(UpdateUserRequest {
-                user_id: UserId::new("bob"),
-                delete_attributes: vec!["first_name".into()],
-                insert_attributes: vec![Attribute {
-                    name: "first_name".into(),
-                    value: "new first".to_string().into(),
-                }],
-                ..Default::default()
-            })
+            .update_user(
+                &RequestContext::empty(),
+                UpdateUserRequest {
+                    user_id: UserId::new("bob"),
+                    delete_attributes: vec!["first_name".into()],
+                    insert_attributes: vec![Attribute {
+                        name: "first_name".into(),
+                        value: "new first".to_string().into(),
+                    }],
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
 
         let user = fixture
             .handler
-            .get_user_details(&UserId::new("bob"))
+            .get_user_details(&RequestContext::empty(), UserId::new("bob"))
             .await
             .unwrap();
         assert_eq!(
@@ -1025,20 +1095,23 @@ mod tests {
 
         fixture
             .handler
-            .update_user(UpdateUserRequest {
-                user_id: UserId::new("bob"),
-                insert_attributes: vec![Attribute {
-                    name: "avatar".into(),
-                    value: JpegPhoto::for_tests().into(),
-                }],
-                ..Default::default()
-            })
+            .update_user(
+                &RequestContext::empty(),
+                UpdateUserRequest {
+                    user_id: UserId::new("bob"),
+                    insert_attributes: vec![Attribute {
+                        name: "avatar".into(),
+                        value: JpegPhoto::for_tests().into(),
+                    }],
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
 
         let user = fixture
             .handler
-            .get_user_details(&UserId::new("bob"))
+            .get_user_details(&RequestContext::empty(), UserId::new("bob"))
             .await
             .unwrap();
         let avatar = Attribute {
@@ -1048,20 +1121,23 @@ mod tests {
         assert!(user.attributes.contains(&avatar));
         fixture
             .handler
-            .update_user(UpdateUserRequest {
-                user_id: UserId::new("bob"),
-                insert_attributes: vec![Attribute {
-                    name: "avatar".into(),
-                    value: JpegPhoto::null().into(),
-                }],
-                ..Default::default()
-            })
+            .update_user(
+                &RequestContext::empty(),
+                UpdateUserRequest {
+                    user_id: UserId::new("bob"),
+                    insert_attributes: vec![Attribute {
+                        name: "avatar".into(),
+                        value: JpegPhoto::null().into(),
+                    }],
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
 
         let user = fixture
             .handler
-            .get_user_details(&UserId::new("bob"))
+            .get_user_details(&RequestContext::empty(), UserId::new("bob"))
             .await
             .unwrap();
         assert!(!user.attributes.contains(&avatar));
@@ -1073,31 +1149,34 @@ mod tests {
 
         fixture
             .handler
-            .create_user(CreateUserRequest {
-                user_id: UserId::new("james"),
-                email: "email".into(),
-                display_name: Some("display_name".to_string()),
-                attributes: vec![
-                    Attribute {
-                        name: "first_name".into(),
-                        value: "First Name".to_string().into(),
-                    },
-                    Attribute {
-                        name: "last_name".into(),
-                        value: "last_name".to_string().into(),
-                    },
-                    Attribute {
-                        name: "avatar".into(),
-                        value: JpegPhoto::for_tests().into(),
-                    },
-                ],
-            })
+            .create_user(
+                &RequestContext::empty(),
+                CreateUserRequest {
+                    user_id: UserId::new("james"),
+                    email: "email".into(),
+                    display_name: Some("display_name".to_string()),
+                    attributes: vec![
+                        Attribute {
+                            name: "first_name".into(),
+                            value: "First Name".to_string().into(),
+                        },
+                        Attribute {
+                            name: "last_name".into(),
+                            value: "last_name".to_string().into(),
+                        },
+                        Attribute {
+                            name: "avatar".into(),
+                            value: JpegPhoto::for_tests().into(),
+                        },
+                    ],
+                },
+            )
             .await
             .unwrap();
 
         let user = fixture
             .handler
-            .get_user_details(&UserId::new("james"))
+            .get_user_details(&RequestContext::empty(), UserId::new("james"))
             .await
             .unwrap();
         assert_eq!(user.email, "email".into());
@@ -1127,12 +1206,19 @@ mod tests {
 
         fixture
             .handler
-            .remove_user_from_group(&UserId::new("bob"), fixture.groups[0])
+            .remove_user_from_group(
+                &RequestContext::empty(),
+                RemoveUserFromGroupRequest {
+                    user_id: UserId::new("bob"),
+                    group_id: fixture.groups[0],
+                },
+            )
             .await
             .unwrap();
 
         assert_eq!(
             get_user_names(
+                &RequestContext::empty(),
                 &fixture.handler,
                 Some(UserRequestFilter::MemberOfId(fixture.groups[0])),
             )
@@ -1147,7 +1233,7 @@ mod tests {
 
         fixture
             .handler
-            .delete_user(&UserId::new("not found"))
+            .delete_user(&RequestContext::empty(), UserId::new("not found"))
             .await
             .expect_err("Should have failed");
     }
@@ -1158,13 +1244,25 @@ mod tests {
 
         fixture
             .handler
-            .remove_user_from_group(&UserId::new("not found"), fixture.groups[0])
+            .remove_user_from_group(
+                &RequestContext::empty(),
+                RemoveUserFromGroupRequest {
+                    user_id: UserId::new("not found"),
+                    group_id: fixture.groups[0],
+                },
+            )
             .await
             .expect_err("Should have failed");
 
         fixture
             .handler
-            .remove_user_from_group(&UserId::new("not found"), GroupId(16242))
+            .remove_user_from_group(
+                &RequestContext::empty(),
+                RemoveUserFromGroupRequest {
+                    user_id: UserId::new("not found"),
+                    group_id: GroupId(16242),
+                },
+            )
             .await
             .expect_err("Should have failed");
     }
@@ -1175,21 +1273,27 @@ mod tests {
 
         fixture
             .handler
-            .create_user(CreateUserRequest {
-                user_id: UserId::new("james"),
-                email: "email".into(),
-                ..Default::default()
-            })
+            .create_user(
+                &RequestContext::empty(),
+                CreateUserRequest {
+                    user_id: UserId::new("james"),
+                    email: "email".into(),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
 
         fixture
             .handler
-            .create_user(CreateUserRequest {
-                user_id: UserId::new("john"),
-                email: "eMail".into(),
-                ..Default::default()
-            })
+            .create_user(
+                &RequestContext::empty(),
+                CreateUserRequest {
+                    user_id: UserId::new("john"),
+                    email: "eMail".into(),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap_err();
     }
