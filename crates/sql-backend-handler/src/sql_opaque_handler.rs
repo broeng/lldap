@@ -208,7 +208,7 @@ impl OpaqueHandler for SqlBackendHandler {
 
 /// Convenience function to set a user's password.
 #[instrument(skip_all, level = "debug", err, fields(username = %username.as_str()))]
-pub(crate) async fn register_password<A: OpaqueHandler>(
+pub async fn register_password<A: OpaqueHandler>(
     opaque_handler: &A,
     username: UserId,
     password: &SecUtf8,
@@ -277,7 +277,8 @@ mod tests {
         let sql_pool = get_initialized_db().await;
         crate::logging::init_for_tests();
         let context = RequestContext::empty();
-        let backend_handler = SqlBackendHandler::new(generate_random_private_key(), sql_pool.clone());
+        let backend_handler =
+            SqlBackendHandler::new(generate_random_private_key(), sql_pool.clone());
         let opaque_handler = SqlBackendHandler::new(generate_random_private_key(), sql_pool);
         insert_user_no_password(&context, &backend_handler, "bob").await;
         insert_user_no_password(&context, &backend_handler, "john").await;
@@ -301,7 +302,7 @@ mod tests {
     async fn test_bind_user() {
         let sql_pool = get_initialized_db().await;
         let context = RequestContext::empty();
-        let handler = SqlOpaqueHandler::new(generate_random_private_key(), sql_pool.clone());
+        let handler = SqlBackendHandler::new(generate_random_private_key(), sql_pool.clone());
         insert_user(&context, &handler, "bob", "bob00").await;
 
         handler

@@ -8,8 +8,12 @@ homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+test = []
+
 [dependencies]
 anyhow = "*"
+async-trait = "0.1"
 ldap3_proto = "0.6.0"
 tracing = "*"
 itertools = "0.10"
@@ -39,8 +43,15 @@ path = "../domain"
 [dependencies.lldap_domain_handlers]
 path = "../domain-handlers"
 
+[dev-dependencies.lldap_domain_handlers]
+path = "../domain-handlers"
+features = ["test"]
+
 [dependencies.lldap_domain_model]
 path = "../domain-model"
+
+[dependencies.lldap_plugin_engine]
+path = "../plugin-engine"
 
 [dependencies.lldap_opaque_handler]
 path = "../opaque-handler"

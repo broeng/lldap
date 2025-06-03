@@ -11,8 +11,11 @@ use ldap3_proto::proto::{
 use lldap_access_control::AdminBackendHandler;
 use lldap_domain::{
     deserialize,
-    requests::{CreateGroupRequest, CreateUserRequest},
     types::{Attribute, AttributeName, AttributeType, Email, GroupName, UserId},
+};
+use lldap_domain_handlers::{
+    handler::RequestContext,
+    requests::{CreateGroupRequest, CreateUserRequest},
 };
 use std::collections::HashMap;
 use tracing::instrument;
@@ -22,14 +25,15 @@ pub(crate) async fn create_user_or_group(
     backend_handler: &impl AdminBackendHandler,
     ldap_info: &LdapInfo,
     request: LdapAddRequest,
+    context: &RequestContext,
 ) -> LdapResult<Vec<LdapOp>> {
     let base_dn_str = &ldap_info.base_dn_str;
     match get_user_or_group_id_from_distinguished_name(&request.dn, &ldap_info.base_dn) {
         UserOrGroupName::User(user_id) => {
-            create_user(backend_handler, user_id, request.attributes).await
+            create_user(backend_handler, user_id, request.attributes, context).await
         }
         UserOrGroupName::Group(group_name) => {
-            create_group(backend_handler, group_name, request.attributes).await
+            create_group(backend_handler, group_name, request.attributes, context).await
         }
         err => Err(err.into_ldap_error(
             &request.dn,
@@ -46,6 +50,7 @@ async fn create_user(
     backend_handler: &impl AdminBackendHandler,
     user_id: UserId,
     attributes: Vec<LdapAttribute>,
+    context: &RequestContext,
 ) -> LdapResult<Vec<LdapOp>> {
     fn parse_attribute(mut attr: LdapPartialAttribute) -> LdapResult<(String, Vec<u8>)> {
         if attr.vals.len() > 1 {
@@ -120,17 +125,20 @@ async fn create_user(
         )?);
     }
     backend_handler
-        .create_user(CreateUserRequest {
-            user_id,
-            email: Email::from(
-                get_attribute("mail")
-                    .or_else(|| get_attribute("email"))
-                    .transpose()?
-                    .unwrap_or_default(),
-            ),
-            display_name: get_attribute("cn").transpose()?,
-            attributes: new_user_attributes,
-        })
+        .create_user(
+            context,
+            CreateUserRequest {
+                user_id,
+                email: Email::from(
+                    get_attribute("mail")
+                        .or_else(|| get_attribute("email"))
+                        .transpose()?
+                        .unwrap_or_default(),
+                ),
+                display_name: get_attribute("cn").transpose()?,
+                attributes: new_user_attributes,
+            },
+        )
         .await
         .map_err(|e| LdapError {
             code: LdapResultCode::OperationsError,
@@ -147,12 +155,16 @@ async fn create_group(
     backend_handler: &impl AdminBackendHandler,
     group_name: GroupName,
     _attributes: Vec<LdapAttribute>,
+    context: &RequestContext,
 ) -> LdapResult<Vec<LdapOp>> {
     backend_handler
-        .create_group(CreateGroupRequest {
-            display_name: group_name,
-            attributes: Vec::new(),
-        })
+        .create_group(
+            context,
+            CreateGroupRequest {
+                display_name: group_name,
+                attributes: Vec::new(),
+            },
+        )
         .await
         .map_err(|e| LdapError {
             code: LdapResultCode::OperationsError,
@@ -167,7 +179,7 @@ async fn create_group(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::handler::tests::setup_bound_admin_handler;
+    use crate::{events::NoopLdapEventHandler, handler::tests::setup_bound_admin_handler};
     use lldap_domain::types::*;
     use lldap_test_utils::MockTestBackendHandler;
     use mockall::predicate::eq;
@@ -175,17 +187,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_user() {
+        let context = RequestContext::empty();
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_create_user()
-            .with(eq(CreateUserRequest {
-                user_id: UserId::new("bob"),
-                email: "".into(),
-                display_name: Some("Bob".to_string()),
-                ..Default::default()
-            }))
+            .with(
+                eq(context.clone()),
+                eq(CreateUserRequest {
+                    user_id: UserId::new("bob"),
+                    email: "".into(),
+                    display_name: Some("Bob".to_string()),
+                    ..Default::default()
+                }),
+            )
             .times(1)
-            .return_once(|_| Ok(()));
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+            .return_once(|_, _| Ok(()));
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = LdapAddRequest {
             dn: "uid=bob,ou=people,dc=example,dc=com".to_owned(),
             attributes: vec![LdapPartialAttribute {
@@ -194,7 +211,7 @@ mod tests {
             }],
         };
         assert_eq!(
-            ldap_handler.create_user_or_group(request).await,
+            ldap_handler.create_user_or_group(&context, request).await,
             Ok(vec![make_add_response(
                 LdapResultCode::Success,
                 String::new()
@@ -204,15 +221,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_group() {
+        let context = RequestContext::empty();
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_create_group()
-            .with(eq(CreateGroupRequest {
-                display_name: GroupName::new("bob"),
-                ..Default::default()
-            }))
+            .with(
+                eq(context.clone()),
+                eq(CreateGroupRequest {
+                    display_name: GroupName::new("bob"),
+                    ..Default::default()
+                }),
+            )
             .times(1)
-            .return_once(|_| Ok(GroupId(5)));
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+            .return_once(|_, _| Ok(GroupId(5)));
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = LdapAddRequest {
             dn: "uid=bob,ou=groups,dc=example,dc=com".to_owned(),
             attributes: vec![LdapPartialAttribute {
@@ -221,7 +243,7 @@ mod tests {
             }],
         };
         assert_eq!(
-            ldap_handler.create_user_or_group(request).await,
+            ldap_handler.create_user_or_group(&context, request).await,
             Ok(vec![make_add_response(
                 LdapResultCode::Success,
                 String::new()
@@ -231,17 +253,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_user_multiple_object_class() {
+        let context = RequestContext::empty();
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_create_user()
-            .with(eq(CreateUserRequest {
-                user_id: UserId::new("bob"),
-                email: "".into(),
-                display_name: Some("Bob".to_string()),
-                ..Default::default()
-            }))
+            .with(
+                eq(context.clone()),
+                eq(CreateUserRequest {
+                    user_id: UserId::new("bob"),
+                    email: "".into(),
+                    display_name: Some("Bob".to_string()),
+                    ..Default::default()
+                }),
+            )
             .times(1)
-            .return_once(|_| Ok(()));
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+            .return_once(|_, _| Ok(()));
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = LdapAddRequest {
             dn: "uid=bob,ou=people,dc=example,dc=com".to_owned(),
             attributes: vec![
@@ -260,7 +287,7 @@ mod tests {
             ],
         };
         assert_eq!(
-            ldap_handler.create_user_or_group(request).await,
+            ldap_handler.create_user_or_group(&context, request).await,
             Ok(vec![make_add_response(
                 LdapResultCode::Success,
                 String::new()

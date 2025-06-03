@@ -14,9 +14,6 @@ use lldap_domain::{
         LdapObjectClass, UserId,
     },
 };
-use lldap_validation::attributes::{ALLOWED_CHARACTERS_DESCRIPTION, validate_attribute_name};
-use std::{collections::BTreeMap, sync::Arc};
-use tracing::{Instrument, Span, debug, debug_span};
 use lldap_domain_handlers::{
     handler::BackendHandler,
     requests::{
@@ -24,8 +21,9 @@ use lldap_domain_handlers::{
         RemoveUserFromGroupRequest, UpdateGroupRequest, UpdateUserRequest,
     },
 };
-use lldap_validation::attributes::{validate_attribute_name, ALLOWED_CHARACTERS_DESCRIPTION};
-use tracing::{debug, debug_span, Instrument, Span};
+use lldap_validation::attributes::{ALLOWED_CHARACTERS_DESCRIPTION, validate_attribute_name};
+use std::{collections::BTreeMap, sync::Arc};
+use tracing::{Instrument, Span, debug, debug_span};
 
 #[derive(PartialEq, Eq, Debug)]
 /// The top-level GraphQL mutation type.
@@ -833,8 +831,8 @@ mod tests {
     };
     use lldap_auth::access_control::{Permission, ValidationResults};
     use lldap_domain::types::{AttributeName, AttributeType};
-    use lldap_test_utils::MockTestBackendHandler;
     use lldap_domain_handlers::handler::RequestContext;
+    use lldap_test_utils::MockTestBackendHandler;
     use mockall::predicate::eq;
     use pretty_assertions::assert_eq;
 

@@ -1,20 +1,21 @@
 [package]
-authors = ["Simon Broeng Jensen <sbj@cwconsult.dk>"]
-description = "Plugin Key-Value store for LLDAP"
 name = "lldap_plugin_kv_store"
 version = "0.1.0"
-edition = "2021"
+authors = ["Simon Broeng Jensen <sbj@cwconsult.dk>"]
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 async-trait = "0.1"
-serde = "*"
 thiserror = "1"
 
 [dev-dependencies.log]
 version = "*"
 
 [dependencies.sea-orm]
-version = "0.12"
+workspace = true
 default-features = false
 features = [
     "macros",
@@ -23,6 +24,9 @@ features = [
     "sqlx-all",
     "runtime-actix-rustls",
 ]
+
+[dependencies.serde]
+workspace = true
 
 [dependencies.tokio]
 version = "*"

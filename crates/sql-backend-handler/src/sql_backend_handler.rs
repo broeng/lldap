@@ -33,11 +33,6 @@ pub mod tests {
         opaque::{self, server::generate_random_private_key},
         registration,
     };
-    use lldap_domain::{
-        requests::{CreateGroupRequest, CreateUserRequest},
-        types::{Attribute as DomainAttribute, GroupId, UserId},
-    };
-    use lldap_auth::{opaque, registration};
     use lldap_domain::types::{Attribute as DomainAttribute, GroupId, UserId};
     use lldap_domain_handlers::{
         handler::{
@@ -48,6 +43,7 @@ pub mod tests {
             AddUserToGroupRequest, CreateGroupRequest, CreateUserRequest, ListUsersRequest,
         },
     };
+    use lldap_opaque_handler::OpaqueHandler;
     use pretty_assertions::assert_eq;
     use sea_orm::Database;
 

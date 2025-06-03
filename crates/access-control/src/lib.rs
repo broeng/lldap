@@ -14,19 +14,13 @@ use lldap_domain_handlers::{
 };
 use tracing::info;
 
-use crate::domain::schema::PublicSchema;
 use lldap_domain::{
-    public_schema::PublicSchema
+    public_schema::PublicSchema,
     schema::{AttributeSchema, Schema},
     types::{
         AttributeName, Group, GroupDetails, GroupId, GroupName, LdapObjectClass, User,
         UserAndGroups, UserId,
     },
-};
-use lldap_domain_handlers::handler::{
-    BackendHandler, GroupBackendHandler, GroupListerBackendHandler, GroupRequestFilter,
-    ReadSchemaBackendHandler, SchemaBackendHandler, UserBackendHandler, UserListerBackendHandler,
-    UserRequestFilter,
 };
 use lldap_domain_model::error::Result;
 use std::collections::HashSet;

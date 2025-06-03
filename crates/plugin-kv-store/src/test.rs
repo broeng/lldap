@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+pub mod tests {
 
     use crate::{migration::create_plugin_kv_table, store::PluginKeyValueStore};
     use lldap_key_value_store::api::store::{KeyValueStore, Scope};

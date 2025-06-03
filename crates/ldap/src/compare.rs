@@ -52,22 +52,27 @@ pub fn compare(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::handler::tests::setup_bound_admin_handler;
+    use crate::{events::NoopLdapEventHandler, handler::tests::setup_bound_admin_handler};
     use chrono::TimeZone;
     use lldap_domain::{
         types::{Group, GroupId, User, UserAndGroups, UserId},
         uuid,
     };
-    use lldap_domain_handlers::handler::{GroupRequestFilter, UserRequestFilter};
+    use lldap_domain_handlers::handler::{GroupRequestFilter, RequestContext, UserRequestFilter};
     use lldap_test_utils::MockTestBackendHandler;
     use pretty_assertions::assert_eq;
 
     #[tokio::test]
     async fn test_compare_user() {
         let mut mock = MockTestBackendHandler::new();
-        mock.expect_list_users().returning(|f, g| {
-            assert_eq!(f, Some(UserRequestFilter::UserId(UserId::new("bob"))));
-            assert!(!g);
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
+        mock.expect_list_users().returning(|_, g| {
+            assert_eq!(
+                g.filter,
+                Some(UserRequestFilter::UserId(UserId::new("bob")))
+            );
+            assert!(g.need_groups);
             Ok(vec![UserAndGroups {
                 user: User {
                     user_id: UserId::new("bob"),
@@ -77,8 +82,8 @@ mod tests {
                 groups: None,
             }])
         });
-        mock.expect_list_groups().returning(|_| Ok(vec![]));
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        mock.expect_list_groups().returning(|_, _| Ok(vec![]));
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let dn = "uid=bob,ou=people,dc=example,dc=com";
         let request = LdapCompareRequest {
             dn: dn.to_string(),
@@ -86,7 +91,7 @@ mod tests {
             val: b"bob".to_vec(),
         };
         assert_eq!(
-            ldap_handler.do_compare(request).await,
+            ldap_handler.do_compare(&context, request).await,
             Ok(vec![LdapOp::CompareResult(LdapResultOp {
                 code: LdapResultCode::CompareTrue,
                 matcheddn: dn.to_string(),
@@ -101,7 +106,7 @@ mod tests {
             val: b"bob@bobmail.bob".to_vec(),
         };
         assert_eq!(
-            ldap_handler.do_compare(request).await,
+            ldap_handler.do_compare(&context, request).await,
             Ok(vec![LdapOp::CompareResult(LdapResultOp {
                 code: LdapResultCode::CompareTrue,
                 matcheddn: dn.to_string(),
@@ -114,9 +119,14 @@ mod tests {
     #[tokio::test]
     async fn test_compare_group() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_users().returning(|_, _| Ok(vec![]));
-        mock.expect_list_groups().returning(|f| {
-            assert_eq!(f, Some(GroupRequestFilter::DisplayName("group".into())));
+        mock.expect_list_groups().returning(|_, f| {
+            assert_eq!(
+                f.filter,
+                Some(GroupRequestFilter::DisplayName("group".into()))
+            );
             Ok(vec![Group {
                 id: GroupId(1),
                 display_name: "group".into(),
@@ -126,7 +136,7 @@ mod tests {
                 attributes: Vec::new(),
             }])
         });
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let dn = "uid=group,ou=groups,dc=example,dc=com";
         let request = LdapCompareRequest {
             dn: dn.to_string(),
@@ -134,7 +144,7 @@ mod tests {
             val: b"group".to_vec(),
         };
         assert_eq!(
-            ldap_handler.do_compare(request).await,
+            ldap_handler.do_compare(&context, request).await,
             Ok(vec![LdapOp::CompareResult(LdapResultOp {
                 code: LdapResultCode::CompareTrue,
                 matcheddn: dn.to_string(),
@@ -147,13 +157,18 @@ mod tests {
     #[tokio::test]
     async fn test_compare_not_found() {
         let mut mock = MockTestBackendHandler::new();
-        mock.expect_list_users().returning(|f, g| {
-            assert_eq!(f, Some(UserRequestFilter::UserId(UserId::new("bob"))));
-            assert!(!g);
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
+        mock.expect_list_users().returning(|_, g| {
+            assert_eq!(
+                g.filter,
+                Some(UserRequestFilter::UserId(UserId::new("bob")))
+            );
+            assert!(g.need_groups);
             Ok(vec![])
         });
-        mock.expect_list_groups().returning(|_| Ok(vec![]));
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        mock.expect_list_groups().returning(|_, _| Ok(vec![]));
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let dn = "uid=bob,ou=people,dc=example,dc=com";
         let request = LdapCompareRequest {
             dn: dn.to_string(),
@@ -161,7 +176,7 @@ mod tests {
             val: b"bob".to_vec(),
         };
         assert_eq!(
-            ldap_handler.do_compare(request).await,
+            ldap_handler.do_compare(&context, request).await,
             Ok(vec![LdapOp::CompareResult(LdapResultOp {
                 code: LdapResultCode::NoSuchObject,
                 matcheddn: "dc=example,dc=com".to_owned(),
@@ -174,9 +189,14 @@ mod tests {
     #[tokio::test]
     async fn test_compare_no_match() {
         let mut mock = MockTestBackendHandler::new();
-        mock.expect_list_users().returning(|f, g| {
-            assert_eq!(f, Some(UserRequestFilter::UserId(UserId::new("bob"))));
-            assert!(!g);
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
+        mock.expect_list_users().returning(|_, g| {
+            assert_eq!(
+                g.filter,
+                Some(UserRequestFilter::UserId(UserId::new("bob")))
+            );
+            assert!(g.need_groups);
             Ok(vec![UserAndGroups {
                 user: User {
                     user_id: UserId::new("bob"),
@@ -186,8 +206,8 @@ mod tests {
                 groups: None,
             }])
         });
-        mock.expect_list_groups().returning(|_| Ok(vec![]));
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        mock.expect_list_groups().returning(|_, _| Ok(vec![]));
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let dn = "uid=bob,ou=people,dc=example,dc=com";
         let request = LdapCompareRequest {
             dn: dn.to_string(),
@@ -195,7 +215,7 @@ mod tests {
             val: b"bob@bob".to_vec(),
         };
         assert_eq!(
-            ldap_handler.do_compare(request).await,
+            ldap_handler.do_compare(&context, request).await,
             Ok(vec![LdapOp::CompareResult(LdapResultOp {
                 code: LdapResultCode::CompareFalse,
                 matcheddn: dn.to_string(),
@@ -208,9 +228,14 @@ mod tests {
     #[tokio::test]
     async fn test_compare_group_member() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_users().returning(|_, _| Ok(vec![]));
-        mock.expect_list_groups().returning(|f| {
-            assert_eq!(f, Some(GroupRequestFilter::DisplayName("group".into())));
+        mock.expect_list_groups().returning(|_, f| {
+            assert_eq!(
+                f.filter,
+                Some(GroupRequestFilter::DisplayName("group".into()))
+            );
             Ok(vec![Group {
                 id: GroupId(1),
                 display_name: "group".into(),
@@ -220,7 +245,7 @@ mod tests {
                 attributes: Vec::new(),
             }])
         });
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let dn = "uid=group,ou=groups,dc=example,dc=com";
         let request = LdapCompareRequest {
             dn: dn.to_string(),
@@ -228,7 +253,7 @@ mod tests {
             val: b"uid=bob,ou=people,dc=example,dc=com".to_vec(),
         };
         assert_eq!(
-            ldap_handler.do_compare(request).await,
+            ldap_handler.do_compare(&context, request).await,
             Ok(vec![LdapOp::CompareResult(LdapResultOp {
                 code: LdapResultCode::CompareTrue,
                 matcheddn: dn.to_owned(),

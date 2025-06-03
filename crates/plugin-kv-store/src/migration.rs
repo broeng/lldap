@@ -1,6 +1,6 @@
 use sea_orm::{
-    sea_query::{self, ColumnDef, Index, Table},
     ConnectionTrait, DatabaseTransaction, DbErr,
+    sea_query::{ColumnDef, Index, Table},
 };
 
 use crate::model::PluginKeyValues;
@@ -24,7 +24,7 @@ pub async fn create_plugin_kv_table(transaction: &DatabaseTransaction) -> Result
                     )
                     .col(
                         ColumnDef::new(PluginKeyValues::PluginKeyValue)
-                            .blob(sea_query::BlobSize::Long)
+                            .blob()
                             .not_null(),
                     )
                     .primary_key(

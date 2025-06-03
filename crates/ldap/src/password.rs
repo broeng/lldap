@@ -1,4 +1,5 @@
 use crate::{
+    LdapEventHandler,
     core::{
         error::{LdapError, LdapResult},
         utils::{LdapInfo, get_user_id_from_distinguished_name},
@@ -12,13 +13,14 @@ use ldap3_proto::proto::{
 use lldap_access_control::{AccessControlledBackendHandler, UserReadableBackendHandler};
 use lldap_auth::access_control::ValidationResults;
 use lldap_domain::types::UserId;
-use lldap_domain_handlers::handler::{BackendHandler, BindRequest, LoginHandler};
+use lldap_domain_handlers::handler::{BackendHandler, BindRequest, LoginHandler, RequestContext};
 use lldap_opaque_handler::OpaqueHandler;
 
 pub(crate) async fn do_bind(
     ldap_info: &LdapInfo,
     request: &LdapBindRequest,
     login_handler: &impl LoginHandler,
+    context: &RequestContext,
 ) -> LdapResult<UserId> {
     if request.dn.is_empty() {
         return Err(LdapError {
@@ -48,10 +50,13 @@ pub(crate) async fn do_bind(
         });
     };
     match login_handler
-        .bind(BindRequest {
-            name: user_id.clone(),
-            password: password.clone(),
-        })
+        .bind(
+            context,
+            BindRequest {
+                name: user_id.clone(),
+                password: password.clone(),
+            },
+        )
         .await
     {
         Ok(()) => Ok(user_id),
@@ -89,12 +94,14 @@ pub(crate) async fn change_password<B: OpaqueHandler>(
     Ok(())
 }
 
-pub(crate) async fn do_password_modification<Handler: BackendHandler>(
+pub(crate) async fn do_password_modification<Handler: BackendHandler, Events: LdapEventHandler>(
     credentials: &ValidationResults,
     ldap_info: &LdapInfo,
     backend_handler: &AccessControlledBackendHandler<Handler>,
+    event_handler: &Events,
     opaque_handler: &impl OpaqueHandler,
     request: &LdapPasswordModifyRequest,
+    context: &RequestContext,
 ) -> LdapResult<Vec<LdapOp>> {
     match (&request.user_identity, &request.new_password) {
         (Some(user), Some(password)) => {
@@ -107,7 +114,7 @@ pub(crate) async fn do_password_modification<Handler: BackendHandler>(
                     let user_is_admin = backend_handler
                         .get_readable_handler(credentials, &uid)
                         .expect("Unexpected permission error")
-                        .get_user_groups(&uid)
+                        .get_user_groups(context, uid.clone())
                         .await
                         .map_err(|e| LdapError {
                             code: LdapResultCode::OperationsError,
@@ -127,13 +134,17 @@ pub(crate) async fn do_password_modification<Handler: BackendHandler>(
                             ),
                         })
                     } else if let Err(e) =
-                        change_password(opaque_handler, uid, password.as_bytes()).await
+                        change_password(opaque_handler, uid.clone(), password.as_bytes()).await
                     {
                         Err(LdapError {
                             code: LdapResultCode::Other,
                             message: format!("Error while changing the password: {:#?}", e),
                         })
                     } else {
+                        // Notify any (allowed, and) registered plugins of the update
+                        event_handler
+                            .on_password_update(context, &uid, password)
+                            .await;
                         Ok(vec![make_extended_response(
                             LdapResultCode::Success,
                             "".to_string(),
@@ -156,11 +167,14 @@ pub(crate) async fn do_password_modification<Handler: BackendHandler>(
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::handler::{
-        LdapHandler, make_modify_response,
-        tests::{
-            setup_bound_admin_handler, setup_bound_password_manager_handler,
-            setup_bound_readonly_handler,
+    use crate::{
+        events::NoopLdapEventHandler,
+        handler::{
+            LdapHandler, make_modify_response,
+            tests::{
+                setup_bound_admin_handler, setup_bound_password_manager_handler,
+                setup_bound_readonly_handler,
+            },
         },
     };
     use chrono::TimeZone;
@@ -221,18 +235,23 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_bind() {
+        let context = RequestContext::empty();
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_bind()
-            .with(eq(lldap_domain_handlers::handler::BindRequest {
-                name: UserId::new("bob"),
-                password: "pass".to_string(),
-            }))
+            .with(
+                eq(context.clone()),
+                eq(lldap_domain_handlers::handler::BindRequest {
+                    name: UserId::new("bob"),
+                    password: "pass".to_string(),
+                }),
+            )
             .times(1)
-            .return_once(|_| Ok(()));
+            .return_once(|_, _| Ok(()));
         mock.expect_get_user_groups()
-            .with(eq(UserId::new("bob")))
-            .return_once(|_| Ok(HashSet::new()));
-        let mut ldap_handler = LdapHandler::new_for_tests(mock, "dc=eXample,dc=com");
+            .with(eq(context.clone()), eq(UserId::new("bob")))
+            .return_once(|_, _| Ok(HashSet::new()));
+        let mut ldap_handler = LdapHandler::new_for_tests(mock, event_mock, "dc=eXample,dc=com");
 
         let request = LdapOp::BindRequest(LdapBindRequest {
             dn: "uid=bob,ou=people,dc=example,dc=com".to_string(),
@@ -246,17 +265,22 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_admin_bind() {
+        let context = RequestContext::empty();
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_bind()
-            .with(eq(lldap_domain_handlers::handler::BindRequest {
-                name: UserId::new("test"),
-                password: "pass".to_string(),
-            }))
+            .with(
+                eq(context.clone()),
+                eq(lldap_domain_handlers::handler::BindRequest {
+                    name: UserId::new("test"),
+                    password: "pass".to_string(),
+                }),
+            )
             .times(1)
-            .return_once(|_| Ok(()));
+            .return_once(|_, _| Ok(()));
         mock.expect_get_user_groups()
-            .with(eq(UserId::new("test")))
-            .return_once(|_| {
+            .with(eq(context.clone()), eq(UserId::new("test")))
+            .return_once(|_, _| {
                 let mut set = HashSet::new();
                 set.insert(GroupDetails {
                     group_id: GroupId(42),
@@ -267,26 +291,31 @@ pub mod tests {
                 });
                 Ok(set)
             });
-        let mut ldap_handler = LdapHandler::new_for_tests(mock, "dc=example,dc=com");
+        let mut ldap_handler = LdapHandler::new_for_tests(mock, event_mock, "dc=example,dc=com");
 
         let request = LdapBindRequest {
             dn: "uid=test,ou=people,dc=example,dc=com".to_string(),
             cred: LdapBindCred::Simple("pass".to_string()),
         };
-        assert_eq!(ldap_handler.do_bind(&request).await, make_bind_success());
+        assert_eq!(
+            ldap_handler.do_bind(&context, &request).await,
+            make_bind_success()
+        );
     }
 
     #[tokio::test]
     async fn test_bind_invalid_dn() {
+        let context = RequestContext::empty();
         let mock = MockTestBackendHandler::new();
-        let mut ldap_handler = LdapHandler::new_for_tests(mock, "dc=example,dc=com");
+        let event_mock = NoopLdapEventHandler::new();
+        let mut ldap_handler = LdapHandler::new_for_tests(mock, event_mock, "dc=example,dc=com");
 
         let request = LdapBindRequest {
             dn: "cn=bob,dc=example,dc=com".to_string(),
             cred: LdapBindCred::Simple("pass".to_string()),
         };
         assert_eq!(
-            ldap_handler.do_bind(&request).await,
+            ldap_handler.do_bind(&context, &request).await,
             make_bind_result(
                 LdapResultCode::NamingViolation,
                 r#"Unexpected DN format. Got "cn=bob,dc=example,dc=com", expected: "uid=id,ou=people,dc=example,dc=com""#
@@ -297,7 +326,7 @@ pub mod tests {
             cred: LdapBindCred::Simple("pass".to_string()),
         };
         assert_eq!(
-            ldap_handler.do_bind(&request).await,
+            ldap_handler.do_bind(&context, &request).await,
             make_bind_result(
                 LdapResultCode::NamingViolation,
                 r#"Unexpected DN format. Got "uid=bob,dc=example,dc=com", expected: "uid=id,ou=people,dc=example,dc=com""#
@@ -308,7 +337,7 @@ pub mod tests {
             cred: LdapBindCred::Simple("pass".to_string()),
         };
         assert_eq!(
-            ldap_handler.do_bind(&request).await,
+            ldap_handler.do_bind(&context, &request).await,
             make_bind_result(
                 LdapResultCode::NamingViolation,
                 r#"Unexpected DN format. Got "uid=bob,ou=groups,dc=example,dc=com", expected: "uid=id,ou=people,dc=example,dc=com""#
@@ -319,7 +348,7 @@ pub mod tests {
             cred: LdapBindCred::Simple("pass".to_string()),
         };
         assert_eq!(
-            ldap_handler.do_bind(&request).await,
+            ldap_handler.do_bind(&context, &request).await,
             make_bind_result(
                 LdapResultCode::NamingViolation,
                 r#"Not a subtree of the base tree"#
@@ -330,7 +359,7 @@ pub mod tests {
             cred: LdapBindCred::Simple("pass".to_string()),
         };
         assert_eq!(
-            ldap_handler.do_bind(&request).await,
+            ldap_handler.do_bind(&context, &request).await,
             make_bind_result(
                 LdapResultCode::NamingViolation,
                 r#"Too many elements in distinguished name: "uid", "bob", "test""#
@@ -340,12 +369,14 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_password_change() {
+        let context = RequestContext::admin("test");
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_get_user_groups()
-            .with(eq(UserId::new("bob")))
-            .returning(|_| Ok(HashSet::new()));
+            .with(eq(context.clone()), eq(UserId::new("bob")))
+            .returning(|_, _| Ok(HashSet::new()));
         expect_password_change(&mut mock, "bob");
-        let mut ldap_handler = setup_bound_admin_handler(mock).await;
+        let mut ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = LdapOp::ExtendedRequest(
             LdapPasswordModifyRequest {
                 user_identity: Some("uid=bob,ou=people,dc=example,dc=com".to_string()),
@@ -365,10 +396,12 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_password_change_modify_request() {
+        let context = RequestContext::admin("test");
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_get_user_groups()
-            .with(eq(UserId::new("bob")))
-            .returning(|_| Ok(HashSet::new()));
+            .with(eq(context.clone()), eq(UserId::new("bob")))
+            .returning(|_, _| Ok(HashSet::new()));
         use lldap_auth::*;
         let mut rng = rand::rngs::OsRng;
         let registration_start_request =
@@ -393,7 +426,7 @@ pub mod tests {
         mock.expect_registration_finish()
             .times(1)
             .return_once(|_| Ok(()));
-        let mut ldap_handler = setup_bound_admin_handler(mock).await;
+        let mut ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = LdapOp::ModifyRequest(LdapModifyRequest {
             dn: "uid=bob,ou=people,dc=example,dc=com".to_string(),
             changes: vec![LdapModify {
@@ -415,10 +448,12 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_password_change_password_manager() {
+        let context = RequestContext::manager("test");
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_get_user_groups()
-            .with(eq(UserId::new("bob")))
-            .returning(|_| Ok(HashSet::new()));
+            .with(eq(context.clone()), eq(UserId::new("bob")))
+            .returning(|_, _| Ok(HashSet::new()));
         use lldap_auth::*;
         let mut rng = rand::rngs::OsRng;
         let registration_start_request =
@@ -443,7 +478,8 @@ pub mod tests {
         mock.expect_registration_finish()
             .times(1)
             .return_once(|_| Ok(()));
-        let mut ldap_handler = setup_bound_password_manager_handler(mock).await;
+        let mut ldap_handler =
+            setup_bound_password_manager_handler(mock, event_mock, &context).await;
         let request = LdapOp::ExtendedRequest(
             LdapPasswordModifyRequest {
                 user_identity: Some("uid=bob,ou=people,dc=example,dc=com".to_string()),
@@ -463,11 +499,13 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_password_change_errors() {
+        let context = RequestContext::empty();
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_get_user_groups()
-            .with(eq(UserId::new("bob")))
-            .returning(|_| Ok(HashSet::new()));
-        let mut ldap_handler = setup_bound_admin_handler(mock).await;
+            .with(eq(context.clone()), eq(UserId::new("bob")))
+            .returning(|_, _| Ok(HashSet::new()));
+        let mut ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = LdapOp::ExtendedRequest(
             LdapPasswordModifyRequest {
                 user_identity: None,
@@ -513,7 +551,9 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_password_change_unauthorized_password_manager() {
+        let context = RequestContext::manager("test");
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         let mut groups = HashSet::new();
         groups.insert(GroupDetails {
             group_id: GroupId(0),
@@ -523,10 +563,11 @@ pub mod tests {
             attributes: Vec::new(),
         });
         mock.expect_get_user_groups()
-            .with(eq(UserId::new("bob")))
+            .with(eq(context.clone()), eq(UserId::new("bob")))
             .times(1)
-            .return_once(|_| Ok(groups));
-        let mut ldap_handler = setup_bound_password_manager_handler(mock).await;
+            .return_once(|_, _| Ok(groups));
+        let mut ldap_handler =
+            setup_bound_password_manager_handler(mock, event_mock, &context).await;
         let request = LdapOp::ExtendedRequest(
             LdapPasswordModifyRequest {
                 user_identity: Some("uid=bob,ou=people,dc=example,dc=com".to_string()),
@@ -546,12 +587,14 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_password_change_unauthorized_readonly() {
+        let context = RequestContext::readonly("test");
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_get_user_groups()
-            .with(eq(UserId::new("bob")))
+            .with(eq(context.clone()), eq(UserId::new("bob")))
             .times(1)
-            .return_once(|_| Ok(HashSet::new()));
-        let mut ldap_handler = setup_bound_readonly_handler(mock).await;
+            .return_once(|_, _| Ok(HashSet::new()));
+        let mut ldap_handler = setup_bound_readonly_handler(mock, event_mock, &context).await;
         let request = LdapOp::ExtendedRequest(
             LdapPasswordModifyRequest {
                 user_identity: Some("uid=bob,ou=people,dc=example,dc=com".to_string()),

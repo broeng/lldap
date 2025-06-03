@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use ldap3_proto::{
-    proto::{LdapBindRequest, LdapExtendedRequest, LdapModifyRequest, LdapOp, LdapSearchRequest},
     LdapSearchResultEntry,
+    proto::{LdapBindRequest, LdapExtendedRequest, LdapModifyRequest, LdapOp, LdapSearchRequest},
 };
 use lldap_auth::{login, registration, types::UserId};
 use lldap_domain::{
@@ -31,12 +31,13 @@ use lldap_plugin_engine::api::{
 };
 use lldap_plugin_kv_store::store::PluginKeyValueStore;
 
+use lldap_ldap::{InternalSearchResults, LdapEventHandler, LdapInfo};
+use lldap_opaque_handler::OpaqueHandler;
+use lldap_sql_backend_handler::SqlBackendHandler;
+
 use crate::{
-    domain::{
-        ldap::utils::LdapInfo, opaque_handler::OpaqueHandler, plugin::backend::ServerBackendAPI,
-        sql_backend_handler::SqlBackendHandler,
-    },
-    infra::{ldap_handler::InternalSearchResults, tcp_backend_handler::TcpBackendHandler},
+    configuration::Configuration, domain::plugin::backend::ServerBackendAPI,
+    tcp_backend_handler::TcpBackendHandler,
 };
 
 use tracing::instrument;
@@ -83,14 +84,15 @@ impl PluginBackendHandler {
     pub fn new(
         backend_handler: &SqlBackendHandler,
         plugin_handler: PluginHandler<PluginKeyValueStore, ServerBackendAPI<SqlBackendHandler>>,
+        config: &Configuration,
     ) -> Self {
         let api: &'static ServerBackendAPI<SqlBackendHandler> =
             Box::leak(Box::new(ServerBackendAPI {
                 backend_handler: backend_handler.clone(),
                 ldap_info: LdapInfo::new(
-                    backend_handler.config.ldap_base_dn.clone(),
-                    backend_handler.config.ignored_user_attributes.clone(),
-                    backend_handler.config.ignored_group_attributes.clone(),
+                    config.ldap_base_dn.clone(),
+                    config.ignored_user_attributes.clone(),
+                    config.ignored_group_attributes.clone(),
                 ),
             }));
         PluginBackendHandler {
@@ -529,47 +531,6 @@ impl TcpBackendHandler for PluginBackendHandler {
     }
 }
 
-// TODO: move somewhere else
-#[async_trait]
-pub trait LdapEventHandler: Clone + Send + Sync {
-    async fn on_ldap_bind(
-        &self,
-        context: &RequestContext,
-        request: &LdapBindRequest,
-        bind_result: BindResult,
-    ) -> BindResult;
-    async fn on_ldap_unbind(&self, context: &RequestContext, user_id: Option<UserId>) -> ();
-    async fn on_ldap_modify(
-        &self,
-        context: &RequestContext,
-        modify_request: LdapModifyRequest,
-        modify_result: Vec<LdapOp>,
-    ) -> Vec<LdapOp>;
-    async fn on_ldap_extended_request(
-        &self,
-        context: &RequestContext,
-        request: LdapExtendedRequest,
-        result: Vec<LdapOp>,
-    ) -> Vec<LdapOp>;
-    async fn on_password_update(
-        &self,
-        context: &RequestContext,
-        user_id: &UserId,
-        password: &String,
-    ) -> ();
-    async fn on_ldap_search_result(
-        &self,
-        context: &RequestContext,
-        request: &LdapSearchRequest,
-        search_result: InternalSearchResults,
-    ) -> InternalSearchResults;
-    async fn on_ldap_root_dse(
-        &self,
-        context: &RequestContext,
-        search_result_entry: LdapSearchResultEntry,
-    ) -> LdapSearchResultEntry;
-}
-
 #[async_trait]
 impl LdapEventHandler for PluginBackendHandler {
     #[instrument(skip_all(), level = "debug")]
@@ -656,70 +617,5 @@ impl LdapEventHandler for PluginBackendHandler {
             .on_ldap_root_dse(context, search_result_entry.clone())
             .await
             .unwrap_or(search_result_entry)
-    }
-}
-
-// TODO: move someehere else
-#[cfg(test)]
-#[derive(Clone)]
-pub struct TestLdapEventHandler {}
-#[cfg(test)]
-impl TestLdapEventHandler {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-#[cfg(test)]
-#[async_trait]
-impl LdapEventHandler for TestLdapEventHandler {
-    async fn on_ldap_bind(
-        &self,
-        _context: &RequestContext,
-        _request: &LdapBindRequest,
-        bind_result: BindResult,
-    ) -> BindResult {
-        bind_result
-    }
-    async fn on_ldap_unbind(&self, _context: &RequestContext, _user_id: Option<UserId>) -> () {
-        ()
-    }
-    async fn on_ldap_modify(
-        &self,
-        _context: &RequestContext,
-        _modify_request: LdapModifyRequest,
-        modify_result: Vec<LdapOp>,
-    ) -> Vec<LdapOp> {
-        modify_result
-    }
-    async fn on_ldap_extended_request(
-        &self,
-        _context: &RequestContext,
-        _request: LdapExtendedRequest,
-        result: Vec<LdapOp>,
-    ) -> Vec<LdapOp> {
-        result
-    }
-    async fn on_password_update(
-        &self,
-        _context: &RequestContext,
-        _user_id: &UserId,
-        _password: &String,
-    ) -> () {
-        ()
-    }
-    async fn on_ldap_search_result(
-        &self,
-        _context: &RequestContext,
-        _request: &LdapSearchRequest,
-        search_result: InternalSearchResults,
-    ) -> InternalSearchResults {
-        search_result
-    }
-    async fn on_ldap_root_dse(
-        &self,
-        _context: &RequestContext,
-        search_result_entry: LdapSearchResultEntry,
-    ) -> LdapSearchResultEntry {
-        search_result_entry
     }
 }

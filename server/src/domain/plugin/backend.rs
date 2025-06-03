@@ -6,6 +6,7 @@ use lldap_auth::types::UserId;
 use lldap_plugin_engine::api::{backend::BackendAPI, types::QueryFilter};
 
 use lldap_domain::{
+    public_schema::PublicSchema,
     schema::Schema,
     types::{AttributeName, Group, GroupDetails, GroupId, LdapObjectClass, User, UserAndGroups},
 };
@@ -17,11 +18,7 @@ use lldap_domain_handlers::{
         UpdateUserRequest,
     },
 };
-
-use crate::domain::{
-    ldap::{group::convert_group_filter, user::convert_user_filter, utils::LdapInfo},
-    schema::PublicSchema,
-};
+use lldap_ldap::{LdapInfo, convert_group_filter, convert_user_filter};
 
 use ldap3_proto::{filter, proto::LdapFilter};
 use tracing::instrument;

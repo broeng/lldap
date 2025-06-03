@@ -1,18 +1,17 @@
-use lldap_key_value_store::api::store::KeyValueStore;
-use lldap_plugin_kv_store::store::PluginKVScope;
+use lldap_key_value_store::api::store::{KeyValueStore, Scope};
 
-use crate::tests::{exec_utils::run_plugin_init, memory_store::InMemoryKeyValueStore};
+use crate::tests::exec_utils::{new_memory_store, run_plugin_init};
 
 #[tokio::test]
 async fn test_init01_can_initialize_without_error() {
-    let res = run_plugin_init(InMemoryKeyValueStore::new(), r#""#).await;
+    let res = run_plugin_init(new_memory_store().await, r#""#).await;
     assert!(res.is_ok());
 }
 
 #[tokio::test]
 async fn test_init02_init_can_trigger_failure() {
     let res = run_plugin_init(
-        InMemoryKeyValueStore::new(),
+        new_memory_store().await,
         r#"
             error("Trigger failure", 1)
         "#,
@@ -24,7 +23,7 @@ async fn test_init02_init_can_trigger_failure() {
 #[tokio::test]
 async fn test_init03_assert_eq_can_trigger_failure() {
     let res = run_plugin_init(
-        InMemoryKeyValueStore::new(),
+        new_memory_store().await,
         r#"
             assert_eq("a", "b")
         "#,
@@ -36,7 +35,7 @@ async fn test_init03_assert_eq_can_trigger_failure() {
 #[tokio::test]
 async fn test_init04_assert_eq_checks_equality() {
     let res = run_plugin_init(
-        InMemoryKeyValueStore::new(),
+        new_memory_store().await,
         r#"
             assert_eq("a", "a")
             assert_eq("Hello, world!", "Hello, world!")
@@ -54,7 +53,7 @@ async fn test_init04_assert_eq_checks_equality() {
 
 #[tokio::test]
 async fn test_kvstore01_can_store() {
-    let kvstore = InMemoryKeyValueStore::new();
+    let kvstore = new_memory_store().await;
     let res = run_plugin_init(
         kvstore.clone(),
         r#"
@@ -69,17 +68,15 @@ async fn test_kvstore01_can_store() {
     // Verify: ensure the plugin ran correctly
     assert!(res.is_ok());
     // Verify: See if we can find the stored in the key value store
-    let scope = PluginKVScope("default".to_string());
-    let res_read = kvstore
-        .fetch::<String>(scope.key("greeting".to_string()))
-        .await;
+    let scope = Scope("default".to_string());
+    let res_read = kvstore.fetch::<String>(scope, "greeting".to_string()).await;
     assert_eq!(res_read.unwrap().unwrap(), "Hello, World!".to_string());
 }
 
 #[tokio::test]
 async fn test_kvstore02_can_remove() {
     let res = run_plugin_init(
-        InMemoryKeyValueStore::new(),
+        new_memory_store().await,
         r#"
             local res, err = context.kvstore:store_str("greeting", "Hello, World!")
             assert_eq(err, nil)
@@ -100,7 +97,7 @@ async fn test_kvstore02_can_remove() {
 #[tokio::test]
 async fn test_kvstore02_can_fetch_and_inc() {
     let res = run_plugin_init(
-        InMemoryKeyValueStore::new(),
+        new_memory_store().await,
         r#"
             local res, err = context.kvstore:store_int("i", 42)
             assert_eq(err, nil)
@@ -120,7 +117,7 @@ async fn test_kvstore02_can_fetch_and_inc() {
 #[tokio::test]
 async fn test_kvstore03_can_fetch_and_inc_w_default() {
     let res = run_plugin_init(
-        InMemoryKeyValueStore::new(),
+        new_memory_store().await,
         r#"
             local res, err = context.kvstore:fetch_and_increment("i", 100)
             assert_eq(err, nil)
@@ -138,7 +135,7 @@ async fn test_kvstore03_can_fetch_and_inc_w_default() {
 #[tokio::test]
 async fn test_kvstore04_can_store_tables() {
     let res = run_plugin_init(
-        InMemoryKeyValueStore::new(),
+        new_memory_store().await,
         r#"
             local t = {
                 hello = "world",

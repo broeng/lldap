@@ -1,22 +1,26 @@
 [package]
-authors = ["Simon Broeng Jensen <sbj@cwconsult.dk>"]
-description = "Key-Value store for LLDAP"
 name = "lldap_key_value_store"
 version = "0.1.0"
-edition = "2021"
+authors = ["Simon Broeng Jensen <sbj@cwconsult.dk>"]
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [features]
 seaorm = ["dep:sea-orm"]
 
 [dependencies]
 async-trait = "0.1"
-serde = "1"
 thiserror = "1"
 
+[dependencies.serde]
+workspace = true
+
 [dependencies.tokio]
-version = "1"
+version = "*"
 features = ["macros", "rt"]
 
 [dependencies.sea-orm]
-version = "0.12"
+workspace = true
 optional = true

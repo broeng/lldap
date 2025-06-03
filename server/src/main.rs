@@ -26,13 +26,14 @@ use crate::{
 };
 use actix::Actor;
 use actix_server::ServerBuilder;
+use anyhow::{Context, Result, anyhow, bail};
+use domain::plugin_backend_handler::PluginBackendHandler;
+use futures_util::TryFutureExt;
+use lldap_plugin_kv_store::store::PluginKeyValueStore;
 use lldap_sql_backend_handler::{
     SqlBackendHandler, register_password,
     sql_tables::{self, get_private_key_info, set_private_key_info},
 };
-use anyhow::{anyhow, bail, Context, Result};
-use domain::{opaque_handler::OpaqueHandler, plugin_backend_handler::PluginBackendHandler};
-use lldap_plugin_kv_store::store::PluginKeyValueStore;
 use sea_orm::{Database, DatabaseConnection};
 use std::time::Duration;
 use tracing::{Instrument, Level, debug, error, info, instrument, span, warn};
@@ -47,13 +48,13 @@ use lldap_domain_handlers::{
         ListUsersRequest,
     },
 };
+use lldap_opaque_handler::OpaqueHandler;
 
 use lldap_plugin_engine::api::{handler::PluginHandler, types::PluginConfig};
 
 mod domain;
-mod infra;
 
-const ADMIN_PASSWORD_MISSING_ERROR : &str = "The LDAP admin password must be initialized. \
+const ADMIN_PASSWORD_MISSING_ERROR: &str = "The LDAP admin password must be initialized. \
             Either set the `ldap_user_pass` config value or the `LLDAP_LDAP_USER_PASS` environment variable. \
             A minimum of 8 characters is recommended.";
 
@@ -179,9 +180,10 @@ async fn setup_plugin_handler(
     let plugin_kv_store = PluginKeyValueStore::new(sql_pool.clone());
     match PluginHandler::new(plugin_configs, plugin_kv_store) {
         Ok(plugin_handler) => {
-            let backend_handler = SqlBackendHandler::new(config.clone(), sql_pool.clone());
+            let backend_handler =
+                SqlBackendHandler::new(config.get_server_setup().clone(), sql_pool.clone());
             let plugin_backend_handler =
-                PluginBackendHandler::new(&backend_handler, plugin_handler);
+                PluginBackendHandler::new(&backend_handler, plugin_handler, &config);
             // Initialize the plugins, ensure they were succesful
             if let Err(e) = plugin_backend_handler.initialize_plugins().await {
                 bail!("A plugin failed to initialize. Exiting. Error: {}", e)
@@ -310,7 +312,7 @@ async fn set_up_server(config: Configuration) -> Result<ServerBuilder> {
     )
     .context("while binding the LDAP server")?;
     let server_builder =
-        infra::tcp_server::build_tcp_server(&config, plugin_backend_handler, server_builder)
+        tcp_server::build_tcp_server(&config, plugin_backend_handler, server_builder)
             .await
             .context("while binding the TCP server")?;
     // Run every hour.

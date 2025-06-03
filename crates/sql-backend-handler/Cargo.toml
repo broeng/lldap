@@ -67,6 +67,9 @@ path = "../domain-handlers"
 [dependencies.lldap_domain_model]
 path = "../domain-model"
 
+[dependencies.lldap_plugin_kv_store]
+path = "../plugin-kv-store"
+
 [dependencies.lldap_opaque_handler]
 path = "../opaque-handler"
 

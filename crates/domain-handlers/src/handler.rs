@@ -134,6 +134,34 @@ impl RequestContext {
             validation_results: None,
         }
     }
+    #[cfg(feature = "test")]
+    pub fn admin(name: &str) -> Self {
+        RequestContext::new(Some(ValidationResults {
+            user: UserId::new(name),
+            permission: lldap_auth::access_control::Permission::Admin,
+        }))
+    }
+    #[cfg(feature = "test")]
+    pub fn regular(name: &str) -> Self {
+        RequestContext::new(Some(ValidationResults {
+            user: UserId::new(name),
+            permission: lldap_auth::access_control::Permission::Regular,
+        }))
+    }
+    #[cfg(feature = "test")]
+    pub fn readonly(name: &str) -> Self {
+        RequestContext::new(Some(ValidationResults {
+            user: UserId::new(name),
+            permission: lldap_auth::access_control::Permission::Readonly,
+        }))
+    }
+    #[cfg(feature = "test")]
+    pub fn manager(name: &str) -> Self {
+        RequestContext::new(Some(ValidationResults {
+            user: UserId::new(name),
+            permission: lldap_auth::access_control::Permission::PasswordManager,
+        }))
+    }
 }
 
 #[async_trait]
@@ -183,9 +211,9 @@ pub trait UserListerBackendHandler: ReadSchemaBackendHandler {
 pub trait UserBackendHandler: ReadSchemaBackendHandler {
     async fn get_user_details(&self, context: &RequestContext, user_id: UserId) -> Result<User>;
     async fn create_user(&self, context: &RequestContext, request: CreateUserRequest)
-        -> Result<()>;
+    -> Result<()>;
     async fn update_user(&self, context: &RequestContext, request: UpdateUserRequest)
-        -> Result<()>;
+    -> Result<()>;
     async fn delete_user(&self, context: &RequestContext, user_id: UserId) -> Result<()>;
     async fn add_user_to_group(
         &self,

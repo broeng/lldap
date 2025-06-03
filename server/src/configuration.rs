@@ -18,13 +18,12 @@ use lldap_auth::opaque::{
     server::{ServerSetup, generate_random_private_key},
 };
 use lldap_domain::types::{AttributeName, UserId};
+use lldap_plugin_engine::api::permissions::Permissions;
 use lldap_sql_backend_handler::sql_tables::{
     ConfigLocation, PrivateKeyHash, PrivateKeyInfo, PrivateKeyLocation,
 };
-use lldap_plugin_engine::api::permissions::Permissions;
 use secstr::SecUtf8;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::path::PathBuf;
 use url::Url;
 

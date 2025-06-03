@@ -16,7 +16,9 @@ use futures::future::{Ready, ok};
 use futures_util::FutureExt;
 use hmac::Hmac;
 use jwt::{SignWithKey, VerifyWithKey};
-use lldap_access_control::{ReadonlyBackendHandler, UserReadableBackendHandler};
+use lldap_access_control::{
+    AccessControlledBackendHandler, ReadonlyBackendHandler, UserReadableBackendHandler,
+};
 use lldap_auth::{
     JWTClaims, access_control::ValidationResults, login, password_reset, registration,
 };
@@ -33,24 +35,10 @@ use std::{
 use time::ext::NumericalDuration;
 use tracing::{debug, info, instrument, warn};
 
-use lldap_auth::{
-    access_control::ValidationResults, login, password_reset, registration, JWTClaims,
-};
 use lldap_domain_handlers::{
     handler::{BackendHandler, BindRequest, LoginHandler, RequestContext, UserRequestFilter},
     requests::ListUsersRequest,
 };
-
-use crate::{
-    domain::opaque_handler::OpaqueHandler,
-    infra::{
-        access_control::{ReadonlyBackendHandler, UserReadableBackendHandler},
-        tcp_backend_handler::*,
-        tcp_server::{error_to_http_response, AppState, TcpError, TcpResult},
-    },
-};
-
-use super::access_control::AccessControlledBackendHandler;
 
 type Token<S> = jwt::Token<jwt::Header, JWTClaims, S>;
 type SignedToken = Token<jwt::token::Signed>;

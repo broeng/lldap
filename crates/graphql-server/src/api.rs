@@ -5,7 +5,7 @@ use lldap_access_control::{
     UserReadableBackendHandler, UserWriteableBackendHandler,
 };
 use lldap_auth::{access_control::ValidationResults, types::UserId};
-use lldap_domain_handlers::handler::BackendHandler;
+use lldap_domain_handlers::handler::{BackendHandler, RequestContext};
 use tracing::debug;
 
 pub struct Context<Handler: BackendHandler> {
@@ -30,6 +30,10 @@ impl<Handler: BackendHandler> Context<Handler> {
             handler: AccessControlledBackendHandler::new(handler),
             validation_result,
         }
+    }
+
+    pub fn get_request_context(&self) -> RequestContext {
+        RequestContext::new(Some(self.validation_result.clone()))
     }
 
     pub fn get_admin_handler(&self) -> Option<&(impl AdminBackendHandler + use<Handler>)> {
