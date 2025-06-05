@@ -39,12 +39,7 @@ local get_config_uid_offset = function(context)
 end
 
 local get_config_default_group = function(context)
-    if context.configuration.default_group ~= nil then
-        return context.configuration.default_group
-    else
-        -- return default
-        return "pam_users"
-    end
+    return context.configuration.default_group or "pam_users"
 end
 
 local resolve_gid_default_group = function(context)
