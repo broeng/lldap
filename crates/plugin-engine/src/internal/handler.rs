@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use async_trait::async_trait;
 
 use ldap3_proto::{
-    proto::{LdapBindRequest, LdapExtendedRequest, LdapModifyRequest, LdapOp, LdapSearchRequest},
     LdapSearchResultEntry,
+    proto::{LdapBindRequest, LdapExtendedRequest, LdapModifyRequest, LdapOp, LdapSearchRequest},
 };
 use lldap_domain::{
     schema::Schema,
@@ -49,7 +49,7 @@ use crate::{
     },
 };
 
-use tracing::{debug, debug_span, instrument, Instrument};
+use tracing::{Instrument, debug, debug_span, instrument};
 
 use super::{
     context::parameters::list_query::ListQueryParam,
@@ -257,7 +257,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         invoke_notification_handler!(
             self,
             context,
-            on_created_user,
+            on_created_group,
             CreateGroupArguments::from(args),
             args
         )
@@ -288,7 +288,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         invoke_notification_handler!(
             self,
             context,
-            on_updated_user,
+            on_updated_group,
             UpdateGroupArguments::from(args),
             args
         )
@@ -319,7 +319,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         invoke_notification_handler!(
             self,
             context,
-            on_deleted_user,
+            on_deleted_group,
             DeleteGroupArguments::from(group_id),
             group_id
         )
