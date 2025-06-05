@@ -172,7 +172,7 @@ impl<Backend: BackendHandler + LoginHandler + OpaqueHandler, Events: LdapEventHa
                     message: "No user currently bound".to_string(),
                 })?;
 
-            let schema = backend_handler.get_schema().await.map_err(|e| LdapError {
+            let schema = backend_handler.get_schema(context).await.map_err(|e| LdapError {
                 code: LdapResultCode::OperationsError,
                 message: format!("Unable to get schema: {:#}", e),
             })?;
