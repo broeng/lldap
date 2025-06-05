@@ -1,11 +1,12 @@
 use crate::{
     LdapEventHandler,
-core::{
-    error::{LdapError, LdapResult},
-    group::{convert_groups_to_ldap_op, get_groups_list},
-    user::{convert_users_to_ldap_op, get_user_list},
-    utils::{LdapInfo, LdapSchemaDescription, is_subtree, parse_distinguished_name},
-}};
+    core::{
+        error::{LdapError, LdapResult},
+        group::{convert_groups_to_ldap_op, get_groups_list},
+        user::{convert_users_to_ldap_op, get_user_list},
+        utils::{LdapInfo, LdapSchemaDescription, is_subtree, parse_distinguished_name},
+    },
+};
 use chrono::Utc;
 use ldap3_proto::proto::{
     LdapDerefAliases, LdapFilter, LdapOp, LdapPartialAttribute, LdapResult as LdapResultOp,
@@ -193,7 +194,7 @@ pub(crate) fn root_dse_response(base_dn: &str) -> LdapSearchResultEntry {
                 vals: vec![b"cn=Subschema".to_vec()],
             },
         ],
-    })
+    }
 }
 
 pub fn make_ldap_subschema_entry(schema: PublicSchema) -> LdapOp {
@@ -265,7 +266,7 @@ pub fn make_ldap_subschema_entry(schema: PublicSchema) -> LdapOp {
             vals: vec![b"cn=Subschema".to_vec()],
            },
         ],
-    }
+    })
 }
 
 pub(crate) fn is_root_dse_request(request: &LdapSearchRequest) -> bool {
