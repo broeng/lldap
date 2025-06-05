@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::types::{AttributeName, AttributeType, LdapObjectClass};
+use itertools::Itertools;
 
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
 pub struct Schema {
@@ -38,10 +39,11 @@ impl AttributeList {
     }
 
     pub fn format_for_ldap_schema_description(&self) -> String {
+        // TODO: Attributes should probably be ensured to be unique at creation.
         self.attributes
             .iter()
             .map(|a| a.name.as_str())
-            // .unique()
+            .unique()
             .collect::<Vec<_>>()
             .join(" $ ")
     }
