@@ -5,11 +5,11 @@ use crate::{
             error::{LdapError, LdapResult},
             group::{
                 convert_groups_to_ldap_op, get_default_group_object_classes, get_groups_list,
-                get_required_group_attributes,
+                REQUIRED_GROUP_ATTRIBUTES,
             },
             user::{
                 convert_users_to_ldap_op, get_default_user_object_classes,
-                get_required_user_attributes, get_user_list,
+                get_user_list, REQUIRED_USER_ATTRIBUTES,
             },
             utils::{
                 get_user_id_from_distinguished_name, is_subtree, parse_distinguished_name, LdapInfo,
@@ -46,7 +46,7 @@ use lldap_domain_handlers::handler::{
     BackendHandler, BindRequest, LoginHandler, ReadSchemaBackendHandler,
 };
 
-use std::{collections::HashMap, ops::Deref};
+use std::collections::HashMap;
 use tracing::{debug, instrument, warn};
 
 #[derive(Debug)]
@@ -243,6 +243,7 @@ impl From<Vec<LdapObjectClass>> for ObjectClassList {
 // See RFC4512 section 4.2.1 "objectClasses"
 impl ObjectClassList {
     fn format_for_ldap_schema_description(&self) -> String {
+        // TODO: Object Classes should probably be ensured to be unique at creation.
         self.0
             .iter()
             .map(|c| format!("'{}'", c))
@@ -261,34 +262,31 @@ pub struct LdapSchemaDescription {
     group_object_classes: ObjectClassList,
 }
 
-impl Deref for LdapSchemaDescription {
-    type Target = Schema;
-
-    fn deref(&self) -> &Self::Target {
-        &self.base
-    }
-}
-
 impl LdapSchemaDescription {
-    fn from(schema: &Schema) -> Self {
+    fn from(schema: PublicSchema) -> Self {
         let mut user_object_classes = get_default_user_object_classes();
-        user_object_classes.extend(schema.extra_user_object_classes.clone());
+        user_object_classes.extend(schema.get_schema().extra_user_object_classes.clone());
         let mut group_object_classes = get_default_group_object_classes();
-        group_object_classes.extend(schema.extra_group_object_classes.clone());
+        group_object_classes.extend(schema.get_schema().extra_group_object_classes.clone());
 
         Self {
-            base: PublicSchema::from(schema.clone()).get_schema().clone(),
+            base: schema.into_schema(),
             user_object_classes: ObjectClassList(user_object_classes),
             group_object_classes: ObjectClassList(group_object_classes),
         }
     }
 
+    fn schema(&self) -> &Schema {
+        &self.base
+    }
+
     fn required_user_attributes(&self) -> AttributeList {
         let attributes = self
+            .schema()
             .user_attributes
             .attributes
             .iter()
-            .filter(|&a| get_required_user_attributes().contains(&a.name))
+            .filter(|&a| REQUIRED_USER_ATTRIBUTES.contains(&a.name.as_str()))
             .cloned()
             .collect();
 
@@ -297,10 +295,11 @@ impl LdapSchemaDescription {
 
     fn optional_user_attributes(&self) -> AttributeList {
         let attributes = self
+            .schema()
             .user_attributes
             .attributes
             .iter()
-            .filter(|&a| !get_required_user_attributes().contains(&a.name))
+            .filter(|&a| !REQUIRED_USER_ATTRIBUTES.contains(&a.name.as_str()))
             .cloned()
             .collect();
 
@@ -309,10 +308,11 @@ impl LdapSchemaDescription {
 
     fn required_group_attributes(&self) -> AttributeList {
         let attributes = self
+            .schema()
             .group_attributes
             .attributes
             .iter()
-            .filter(|&a| get_required_group_attributes().contains(&a.name))
+            .filter(|&a| REQUIRED_GROUP_ATTRIBUTES.contains(&a.name.as_str()))
             .cloned()
             .collect();
 
@@ -321,10 +321,11 @@ impl LdapSchemaDescription {
 
     fn optional_group_attributes(&self) -> AttributeList {
         let attributes = self
+            .schema()
             .group_attributes
             .attributes
             .iter()
-            .filter(|&a| !get_required_group_attributes().contains(&a.name))
+            .filter(|&a| !REQUIRED_GROUP_ATTRIBUTES.contains(&a.name.as_str()))
             .cloned()
             .collect();
 
@@ -332,14 +333,16 @@ impl LdapSchemaDescription {
     }
 
     // See RFC4512 section 4.2.2 "attributeTypes"
-    fn formatted_attribute_list(&self) -> Vec<Vec<u8>> {
+    // Parameter 'index_offset' is an offset for the enumeration of this list of attributes,
+    // it has been preceeded by the list of hardcoded attributes.
+    fn formatted_attribute_list(&self, index_offset: usize) -> Vec<Vec<u8>> {
         let mut formatted_list: Vec<Vec<u8>> = Vec::new();
 
         for (index, attribute) in self.all_attributes().attributes.into_iter().enumerate() {
             formatted_list.push(
                 format!(
                     "( 2.{} NAME '{}' DESC 'LLDAP: {}' SUP {:?} )",
-                    (index + 4),
+                    (index + index_offset),
                     attribute.name,
                     if attribute.is_hardcoded {
                         "builtin attribute"
@@ -357,15 +360,15 @@ impl LdapSchemaDescription {
     }
 
     pub fn all_attributes(&self) -> AttributeList {
-        let mut combined_attributes = self.user_attributes.attributes.clone();
-        combined_attributes.extend(self.group_attributes.attributes.clone());
+        let mut combined_attributes = self.schema().user_attributes.attributes.clone();
+        combined_attributes.extend(self.schema().group_attributes.attributes.clone());
         AttributeList {
             attributes: combined_attributes,
         }
     }
 }
 
-fn schema_response(schema: &Schema) -> LdapOp {
+fn make_ldap_subschema_entry(schema: PublicSchema) -> LdapOp {
     let ldap_schema_description: LdapSchemaDescription = LdapSchemaDescription::from(schema);
 
     let current_time_utc = Utc::now().format("%Y%m%d%H%M%SZ").to_string().into_bytes();
@@ -410,7 +413,8 @@ fn schema_response(schema: &Schema) -> LdapOp {
                 b"( 2.2 NAME 'JpegPhoto' SYNTAX 1.3.6.1.4.1.1466.115.121.1.28 )".to_vec(),
                 b"( 2.3 NAME 'DateTime' SYNTAX 1.3.6.1.4.1.1466.115.121.1.24 )".to_vec(),
                 ].into_iter().chain(
-                    ldap_schema_description.formatted_attribute_list()
+                    // we pass the number of hardcoded attributes already included for formatting of custom attributes
+                    ldap_schema_description.formatted_attribute_list(4)
                 ).collect()
            },
            LdapPartialAttribute {
@@ -793,7 +797,7 @@ impl<Backend: BackendHandler + LoginHandler + OpaqueHandler> LdapHandler<Backend
             }
         } else if request.base == "cn=Subschema" && request.scope == LdapSearchScope::Base {
             // See RFC4512 section 4.4 "Subschema discovery"
-            debug!("Schema request made");
+            debug!("Schema request");
             let backend_handler = self
                 .user_info
                 .as_ref()
@@ -803,11 +807,14 @@ impl<Backend: BackendHandler + LoginHandler + OpaqueHandler> LdapHandler<Backend
                     message: "No user currently bound".to_string(),
                 })?;
 
-            let schema = &backend_handler.get_schema().await.map_err(|e| LdapError {
+            let schema = backend_handler.get_schema().await.map_err(|e| LdapError {
                 code: LdapResultCode::OperationsError,
                 message: format!("Unable to get schema: {:#}", e),
             })?;
-            return Ok(vec![schema_response(&schema), make_search_success()]);
+            return Ok(vec![
+                make_ldap_subschema_entry(PublicSchema::from(schema)),
+                make_search_success(),
+            ]);
         }
         self.do_search(request).await
     }

@@ -23,17 +23,10 @@ use lldap_domain::types::{
 use lldap_domain_handlers::handler::{UserListerBackendHandler, UserRequestFilter};
 use lldap_domain_model::model::UserColumn;
 
-const REQUIRED_USER_ATTRIBUTES: &[&str] = &["user_id", "mail"];
+pub const REQUIRED_USER_ATTRIBUTES: &[&str] = &["user_id", "mail"];
 
 const DEFAULT_USER_OBJECT_CLASSES: &[&str] =
     &["inetOrgPerson", "posixAccount", "mailAccount", "person"];
-
-pub fn get_required_user_attributes() -> Vec<AttributeName> {
-    REQUIRED_USER_ATTRIBUTES
-        .iter()
-        .map(|a| AttributeName::from(a.to_string()))
-        .collect()
-}
 
 fn get_default_user_object_classes_vec_u8() -> Vec<Vec<u8>> {
     DEFAULT_USER_OBJECT_CLASSES

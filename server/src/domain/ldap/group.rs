@@ -22,18 +22,11 @@ use lldap_domain::types::{
 };
 use lldap_domain_handlers::handler::{GroupListerBackendHandler, GroupRequestFilter};
 
-const REQUIRED_GROUP_ATTRIBUTES: &[&str] = &["display_name"];
+pub const REQUIRED_GROUP_ATTRIBUTES: &[&str] = &["display_name"];
 
 const DEFAULT_GROUP_OBJECT_CLASSES: &[&str] = &["groupOfUniqueNames"];
 
-pub fn get_required_group_attributes() -> Vec<AttributeName> {
-    REQUIRED_GROUP_ATTRIBUTES
-        .iter()
-        .map(|a| AttributeName::from(a.to_string()))
-        .collect()
-}
-
-fn get_default_group_object_classes_vec_u8() -> Vec<Vec<u8>> {
+fn get_default_group_object_classes_as_bytes() -> Vec<Vec<u8>> {
     DEFAULT_GROUP_OBJECT_CLASSES
         .iter()
         .map(|c| c.as_bytes().to_vec())
@@ -57,7 +50,7 @@ pub fn get_group_attribute(
 ) -> Option<Vec<Vec<u8>>> {
     let attribute_values = match map_group_field(attribute, schema) {
         GroupFieldType::ObjectClass => {
-            let mut classes: Vec<Vec<u8>> = get_default_group_object_classes_vec_u8();
+            let mut classes: Vec<Vec<u8>> = get_default_group_object_classes_as_bytes();
 
             classes.extend(
                 schema
