@@ -19,7 +19,9 @@ use ldap3_proto::proto::{
 use lldap_access_control::AccessControlledBackendHandler;
 use lldap_auth::access_control::ValidationResults;
 use lldap_domain::{public_schema::PublicSchema, types::AttributeName};
-use lldap_domain_handlers::handler::{BackendHandler, LoginHandler, ReadSchemaBackendHandler, RequestContext};
+use lldap_domain_handlers::handler::{
+    BackendHandler, LoginHandler, ReadSchemaBackendHandler, RequestContext,
+};
 use lldap_opaque_handler::OpaqueHandler;
 use lldap_plugin_engine::api::arguments::ldap_bind_result::BindResult;
 use tracing::{debug, instrument};
@@ -172,10 +174,13 @@ impl<Backend: BackendHandler + LoginHandler + OpaqueHandler, Events: LdapEventHa
                     message: "No user currently bound".to_string(),
                 })?;
 
-            let schema = backend_handler.get_schema(context).await.map_err(|e| LdapError {
-                code: LdapResultCode::OperationsError,
-                message: format!("Unable to get schema: {:#}", e),
-            })?;
+            let schema = backend_handler
+                .get_schema(context)
+                .await
+                .map_err(|e| LdapError {
+                    code: LdapResultCode::OperationsError,
+                    message: format!("Unable to get schema: {:#}", e),
+                })?;
             return Ok(vec![
                 make_ldap_subschema_entry(PublicSchema::from(schema)),
                 make_search_success(),
@@ -316,6 +321,7 @@ impl<Backend: BackendHandler + LoginHandler + OpaqueHandler, Events: LdapEventHa
         };
         let result = modify::handle_modify_request(
             self.get_opaque_handler(),
+            &self.event_handler,
             |credentials, user_id| {
                 self.backend_handler
                     .get_readable_handler(credentials, &user_id)

@@ -584,12 +584,12 @@ impl LdapEventHandler for PluginBackendHandler {
         &self,
         context: &RequestContext,
         user_id: &UserId,
-        password: &String,
+        password: &[u8],
     ) -> () {
         let context = self.new_plugin_context(context);
         let _ = self
             .plugin_handler
-            .on_ldap_password_update(context, user_id.clone(), password.clone())
+            .on_ldap_password_update(context, user_id.clone(), password)
             .await;
     }
     #[instrument(skip_all(), level = "debug")]

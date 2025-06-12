@@ -916,10 +916,10 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         &self,
         context: PluginContext<API>,
         user_id: UserId,
-        password: String,
+        password: &[u8],
     ) -> Result<(), String> {
         if !self.plugin_registry.on_ldap_extended_request.is_empty() {
-            let secret = Some(RestrictedSecret::new(password.into()));
+            let secret = RestrictedSecret::new(Secret::from_bytes(password));
             let _ = exec_mutation_handler_alt(
                 context,
                 self.kvstore.clone(),
@@ -928,7 +928,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
                 UpdatePasswordArguments {
                     user_id: user_id.into_string(),
                 },
-                secret,
+                Some(secret),
                 apply_permission_to_secret,
             )
             .await?;

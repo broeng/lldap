@@ -2,8 +2,8 @@ use std::{collections::HashSet, marker::PhantomData};
 
 use async_trait::async_trait;
 use ldap3_proto::{
-    proto::{LdapBindRequest, LdapExtendedRequest, LdapModifyRequest, LdapOp, LdapSearchRequest},
     LdapSearchResultEntry,
+    proto::{LdapBindRequest, LdapExtendedRequest, LdapModifyRequest, LdapOp, LdapSearchRequest},
 };
 use lldap_domain::{
     schema::Schema,
@@ -319,12 +319,11 @@ where
         result: Vec<LdapOp>,
     ) -> Result<Vec<LdapOp>, String>;
 
-    // TODO: Ensure it's called on both extended and modify requests
     async fn on_ldap_password_update(
         &self,
         context: PluginContext<API>,
         user_id: UserId,
-        password: String,
+        password: &[u8],
     ) -> Result<(), String>;
 
     async fn on_ldap_search_result(

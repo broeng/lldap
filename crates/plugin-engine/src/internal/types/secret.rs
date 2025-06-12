@@ -11,6 +11,12 @@ pub struct Secret {
 }
 
 impl Secret {
+    pub fn from_bytes(secret: &[u8]) -> Self {
+        Secret {
+            secret: secret.to_vec(),
+        }
+    }
+
     pub fn try_from_extended_request(extended_request: &LdapExtendedRequest) -> Option<Secret> {
         match LdapPasswordModifyRequest::try_from(extended_request) {
             Ok(password_request) => password_request.new_password.map(|p| Secret {

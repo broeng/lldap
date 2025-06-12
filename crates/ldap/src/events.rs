@@ -34,7 +34,7 @@ pub trait LdapEventHandler: Send + Sync {
         &self,
         context: &RequestContext,
         user_id: &UserId,
-        password: &String,
+        password: &[u8],
     ) -> ();
     async fn on_ldap_search_result(
         &self,
@@ -94,7 +94,7 @@ impl LdapEventHandler for NoopLdapEventHandler {
         &self,
         _context: &RequestContext,
         _user_id: &UserId,
-        _password: &String,
+        _password: &[u8],
     ) -> () {
         ()
     }
@@ -146,7 +146,7 @@ mockall::mock! {
             &self,
             context: &RequestContext,
             user_id: &UserId,
-            password: &String,
+            password: &[u8],
         ) -> ();
         async fn on_ldap_search_result(
             &self,

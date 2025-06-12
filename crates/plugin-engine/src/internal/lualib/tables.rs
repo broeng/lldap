@@ -1,4 +1,4 @@
-use mlua::{Result as LuaResult, Table, UserData, UserDataMethods, Value};
+use mlua::{Error, Result as LuaResult, Table, UserData, UserDataMethods, Value};
 
 #[derive(Clone, Debug)]
 pub struct LuaTablesLib;
@@ -12,15 +12,23 @@ impl UserData for LuaTablesLib {
         methods.add_method("has_subtree", |_, _, (base, tree): (Table, Table)| {
             table_has_tree(&base, &tree)
         });
-        methods.add_method("empty", |_, _, t: Table| Ok(t.len()? == 0));
+        methods.add_method("empty", |_, _, t: Table| {
+            Ok(t.pairs()
+                .collect::<Vec<Result<(Value, Value), Error>>>()
+                .len()
+                == 0)
+        });
     }
 }
 
 fn table_equals(a: &Table, b: &Table) -> LuaResult<bool> {
-    if a.len()? != b.len()? {
+    // Collect the elements to vec's, for reliable length comparison
+    let apairs = a.pairs().collect::<Vec<Result<(Value, Value), Error>>>();
+    let bpairs = b.pairs().collect::<Vec<Result<(Value, Value), Error>>>();
+    if apairs.len() != bpairs.len() {
         return Ok(false);
     }
-    for pair in a.pairs::<Value, Value>() {
+    for pair in apairs {
         let (key, value) = pair?;
         if !b.contains_key(key.clone())? {
             return Ok(false);

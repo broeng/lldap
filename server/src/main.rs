@@ -158,6 +158,7 @@ async fn setup_plugin_handler(
                 p.1.kvscope.clone(),
                 p.1.permissions.clone(),
                 p.1.config.clone(),
+                p.1.priority,
             ) {
                 Ok(c) => Some(c),
                 Err(e) => {

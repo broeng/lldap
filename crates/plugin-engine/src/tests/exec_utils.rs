@@ -32,6 +32,7 @@ pub fn plugin_config_from_file(path: &str) -> PluginConfig {
             secrets: SecretPermissions::AllowAnyHash,
         },
         BTreeMap::new(),
+        100,
     )
     .unwrap()
 }
@@ -39,6 +40,7 @@ pub fn plugin_config_from_file(path: &str) -> PluginConfig {
 pub fn plugin_config_from_str(source: String) -> PluginConfig {
     PluginConfig {
         plugin_source: PluginSource::ScriptSource(source),
+        priority: 100,
         kvscope: Some("default".to_string()),
         permissions: Permissions {
             secrets: SecretPermissions::AllowAnyHash,

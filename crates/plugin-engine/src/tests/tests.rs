@@ -154,3 +154,30 @@ async fn test_kvstore04_can_store_tables() {
     // Verify: ensure the plugin ran correctly
     assert!(res.is_ok());
 }
+
+#[tokio::test]
+async fn test_lib_tables_empty() {
+    let res = run_plugin_init(
+        new_memory_store().await,
+        r#"
+            assert_eq(lldap.tables:empty({}), true)
+        "#,
+    )
+    .await;
+    // Verify: ensure the plugin ran correctly
+    assert!(res.is_ok());
+}
+
+#[tokio::test]
+async fn test_lib_tables_not_empty() {
+    let res = run_plugin_init(
+        new_memory_store().await,
+        r#"
+            local t = { a = 1 }
+            assert_eq(lldap.tables:empty(t), false)
+        "#,
+    )
+    .await;
+    // Verify: ensure the plugin ran correctly
+    assert!(res.is_ok());
+}

@@ -69,7 +69,6 @@ pub mod tests {
         name: &str,
         pass: &str,
     ) {
-        use lldap_opaque_handler::OpaqueHandler;
         insert_user_no_password(context, handler, name).await;
         let mut rng = rand::rngs::OsRng;
         let client_registration_start =

@@ -99,18 +99,30 @@ impl From<bool> for UserRequestFilter {
 
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
 pub enum GroupRequestFilter {
+    #[serde(rename = "true")]
     True,
+    #[serde(rename = "false")]
     False,
+    #[serde(rename = "and")]
     And(Vec<GroupRequestFilter>),
+    #[serde(rename = "or")]
     Or(Vec<GroupRequestFilter>),
+    #[serde(rename = "not")]
     Not(Box<GroupRequestFilter>),
+    #[serde(rename = "displayName")]
     DisplayName(GroupName),
+    #[serde(rename = "displayNameSubString")]
     DisplayNameSubString(SubStringFilter),
+    #[serde(rename = "uuid")]
     Uuid(Uuid),
+    #[serde(rename = "groupId")]
     GroupId(GroupId),
     // Check if the group contains a user identified by uid.
+    #[serde(rename = "member")]
     Member(UserId),
+    #[serde(rename = "attributeEquality")]
     AttributeEquality(AttributeName, AttributeValue),
+    #[serde(rename = "attributePresent")]
     CustomAttributePresent(AttributeName),
 }
 

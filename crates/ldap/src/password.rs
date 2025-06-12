@@ -67,10 +67,12 @@ pub(crate) async fn do_bind(
     }
 }
 
-pub(crate) async fn change_password<B: OpaqueHandler>(
+pub(crate) async fn change_password<B: OpaqueHandler, E: LdapEventHandler>(
     backend_handler: &B,
+    event_handler: &E,
     user: UserId,
     password: &[u8],
+    context: &RequestContext,
 ) -> Result<()> {
     use lldap_auth::*;
     let mut rng = rand::rngs::OsRng;
@@ -91,6 +93,10 @@ pub(crate) async fn change_password<B: OpaqueHandler>(
         registration_upload: registration_finish.message,
     };
     backend_handler.registration_finish(req).await?;
+    // Notify any registered plugins of the update
+    event_handler
+        .on_password_update(context, &user, password)
+        .await;
     Ok(())
 }
 
@@ -133,18 +139,20 @@ pub(crate) async fn do_password_modification<Handler: BackendHandler, Events: Ld
                                 &credentials.user, &uid
                             ),
                         })
-                    } else if let Err(e) =
-                        change_password(opaque_handler, uid.clone(), password.as_bytes()).await
+                    } else if let Err(e) = change_password(
+                        opaque_handler,
+                        event_handler,
+                        uid.clone(),
+                        password.as_bytes(),
+                        context,
+                    )
+                    .await
                     {
                         Err(LdapError {
                             code: LdapResultCode::Other,
                             message: format!("Error while changing the password: {:#?}", e),
                         })
                     } else {
-                        // Notify any (allowed, and) registered plugins of the update
-                        event_handler
-                            .on_password_update(context, &uid, password)
-                            .await;
                         Ok(vec![make_extended_response(
                             LdapResultCode::Success,
                             "".to_string(),

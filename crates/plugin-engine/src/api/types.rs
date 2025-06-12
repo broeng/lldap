@@ -55,6 +55,7 @@ impl std::fmt::Display for PluginSource {
 
 pub struct PluginConfig {
     pub plugin_source: PluginSource,
+    pub priority: u8,
     pub kvscope: Option<String>,
     pub permissions: Permissions,
     pub configuration: BTreeMap<String, String>,
@@ -66,9 +67,11 @@ impl PluginConfig {
         kv_scope: Option<String>,
         permissions: Permissions,
         configuration: BTreeMap<String, String>,
+        priority: u8,
     ) -> Result<Self, String> {
         Ok(PluginConfig {
             plugin_source: PluginSource::from_path(path)?,
+            priority,
             kvscope: kv_scope,
             permissions,
             configuration,

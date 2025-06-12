@@ -47,7 +47,7 @@ impl UserData for RestrictedSecret {
                         Ok(s) => {
                             let ws: WString<LittleEndian> = WString::from(&s);
                             let hash = hash_bytes::<Md4>(ws.into_bytes().as_slice());
-                            Ok(base16ct::lower::encode_string(hash.as_slice()))
+                            Ok(base16ct::lower::encode_string(hash.as_slice()).to_uppercase())
                         }
                         Err(_) => Err("invalid utf8 string".to_string()),
                     },

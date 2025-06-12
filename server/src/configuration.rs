@@ -90,6 +90,8 @@ impl std::default::Default for LdapsOptions {
 pub struct PluginOptions {
     #[builder(default = "true")]
     pub enabled: bool,
+    #[builder(default = "100")]
+    pub priority: u8,
     #[builder(default = r#"None"#)]
     pub kvscope: Option<String>,
     pub plugin_path: PathBuf,

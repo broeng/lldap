@@ -1,4 +1,5 @@
 use crate::{
+    LdapEventHandler,
     core::{
         error::{LdapError, LdapResult},
         utils::{LdapInfo, get_user_id_from_distinguished_name},
@@ -15,10 +16,12 @@ use lldap_opaque_handler::OpaqueHandler;
 
 async fn handle_modify_change(
     opaque_handler: &impl OpaqueHandler,
+    event_handler: &impl LdapEventHandler,
     user_id: UserId,
     credentials: &ValidationResults,
     user_is_admin: bool,
     change: &LdapModify,
+    context: &RequestContext,
 ) -> LdapResult<()> {
     if !change
         .modification
@@ -44,7 +47,7 @@ async fn handle_modify_change(
         });
     }
     if let [value] = &change.modification.vals.as_slice() {
-        password::change_password(opaque_handler, user_id, value)
+        password::change_password(opaque_handler, event_handler, user_id, value, context)
             .await
             .map_err(|e| LdapError {
                 code: LdapResultCode::Other,
@@ -64,6 +67,7 @@ async fn handle_modify_change(
 
 pub(crate) async fn handle_modify_request<'cred, UserBackendHandler>(
     opaque_handler: &impl OpaqueHandler,
+    event_handler: &impl LdapEventHandler,
     get_readable_handler: impl FnOnce(
         &'cred ValidationResults,
         UserId,
@@ -103,10 +107,12 @@ where
             for change in &request.changes {
                 handle_modify_change(
                     opaque_handler,
+                    event_handler,
                     uid.clone(),
                     credentials,
                     user_is_admin,
                     change,
+                    context,
                 )
                 .await?
             }

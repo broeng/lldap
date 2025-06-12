@@ -26,6 +26,7 @@ macro_rules! declare_plugin_registry {
             }
             pub fn sort_handlers(&mut self) -> () {
                 let sort_callbacks = |callback: &Callback| callback.priority;
+                self.init.sort_by_key(sort_callbacks);
                 $(self.$is.sort_by_key(sort_callbacks));*
             }
             pub fn register_handler(&mut self, plugin: &Arc<Plugin>, event: &str, table: mlua::Table) -> mlua::Result<()> {

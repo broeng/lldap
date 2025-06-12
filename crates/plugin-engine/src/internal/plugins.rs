@@ -42,7 +42,7 @@ fn load_plugin(plugin_config: &PluginConfig, plugins: &mut PluginRegistry) -> Lu
         debug!("[{}] Found an initialization routine", &plugin_name);
         plugins.init.push(Callback {
             plugin: Arc::clone(&plugin),
-            priority: 1,
+            priority: plugin_config.priority,
             callback: test_module.get("init")?,
         });
     }
