@@ -49,7 +49,13 @@ impl IntoLua for UpdateUserArguments {
     fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         let t = lua.create_table()?;
         t.set("user_id", lua.to_value(&self.user_id)?)?;
-        t.set("email", lua.to_value(&self.email)?)?;
+        t.set(
+            "email",
+            match self.email {
+                Some(email) => lua.to_value(&email)?,
+                None => Value::Nil,
+            },
+        )?;
         t.set(
             "display_name",
             match self.display_name {
