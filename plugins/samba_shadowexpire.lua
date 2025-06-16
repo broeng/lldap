@@ -7,6 +7,25 @@
 --   follow_attribute: the attribute used to determine active/inactive state
 --   active_value: set the value denoting an active user
 
+local on_create_or_update_user = function(context, attributes, out_attrs)
+    local attr = attributes[context.configuration.follow_attribute]
+    if attr ~= nil then
+        if tostring(attr.int) == context.configuration.active_value then
+            -- mark account as active
+            out_attrs.shadowexpire = {
+                int = -1
+            }
+        else
+            -- disable account
+            out_attrs.shadowexpire = {
+                int = 0
+            }
+        end
+    else
+        lldap.log:info("Couldn't find follow_attribute " .. context.configuration.follow_attribute)
+    end
+end
+
 local initialize_attributes = function(context)
     lldap.log:debug("Initializing samba_shadowexpire")
     local schema = context.api:get_schema()
@@ -23,33 +42,34 @@ local initialize_attributes = function(context)
             error("Got error from creating 'shadowexpire' attribute", 1)
         end
     end
-end
-
-local on_create_or_update_user = function(context, attributes)
-    local attr = attributes[context.configuration.follow_attribute]
-    if attr ~= nil then
-        if tostring(attr.int) == context.configuration.active_value then
-            -- mark account as active
-            attributes.shadowexpire = {
-                int = -1
-            }
+    -- initialize users
+    if context.configuration.init_users == "true" then
+        local users, err = context.api:list_users({})
+        if err ~= nil then
+            lldap.log:warn("Unable to search users for user initialization")
         else
-            -- disable account
-            attributes.shadowexpire = {
-                int = 0
-            }
+            for idx, u in pairs(users) do
+                local updated_attributes = {}
+                on_create_or_update_user(context, u.user.attributes, updated_attributes)
+                if not lldap.tables:empty(updated_attributes) then
+                    lldap.log:info("Initializing shadowexpire attribute for user " .. u.user.user_id)
+                    context.api:update_user({
+                        user_id = u.user.user_id,
+                        insert_attributes = updated_attributes
+                    })
+                end
+            end
         end
     end
-    return attributes
 end
 
 local on_create_user = function(context, args)
-    args.attributes = on_create_or_update_user(context, args.attributes)
+    on_create_or_update_user(context, args.attributes, args.attributes)
     return args
 end
 
 local on_update_user = function(context, args)
-    args.insert_attributes = on_create_or_update_user(context, args.insert_attributes)
+    on_create_or_update_user(context, args.insert_attributes, args.insert_attributes)
     return args
 end
 
