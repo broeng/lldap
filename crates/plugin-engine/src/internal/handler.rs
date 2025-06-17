@@ -444,7 +444,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         invoke_mutation_handler!(
             self,
             context,
-            on_get_user_details_result,
+            on_get_group_details_result,
             LuaGroupDetails::from(args),
             LuaGroupDetails::into,
             args
@@ -918,7 +918,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         user_id: UserId,
         password: &[u8],
     ) -> Result<(), String> {
-        if !self.plugin_registry.on_ldap_extended_request.is_empty() {
+        if !self.plugin_registry.on_ldap_password_update.is_empty() {
             let secret = RestrictedSecret::new(Secret::from_bytes(password));
             let _ = exec_mutation_handler_alt(
                 context,
