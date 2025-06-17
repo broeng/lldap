@@ -158,8 +158,8 @@ local initialize_attributes = function(context)
 end
 
 local on_password_update = function(context, args, secrets)
-    local ntlm_hash, err = secrets.to_ntlm_hash()
-    if err ~= nil then
+    local ntlm_hash, err = secrets:to_ntlm_hash()
+    if err == nil then
         lldap.log:debug("New password being set for " .. args.user_id)
         lldap.log:debug("New samba hash: " .. ntlm_hash)
         context.api:update_user({

@@ -29,11 +29,9 @@ impl FromLua for AttributeMapArgument {
     fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
         match value {
             Value::Table(t) => {
-                println!("Got a table");
                 let mut parsed_attributes: Vec<Attribute> = Vec::new();
                 for attr in t.pairs() {
                     let (name, val_table): (String, Table) = attr?;
-                    println!("Got a key: {}", name);
                     parsed_attributes.push(Attribute {
                         name: name.into(),
                         value: parse_attribute_value(val_table)?,
