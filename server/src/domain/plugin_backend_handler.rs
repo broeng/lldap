@@ -157,7 +157,7 @@ impl SchemaBackendHandler for PluginBackendHandler {
             self,
             context,
             on_add_group_attribute,
-            add_user_attribute,
+            add_group_attribute,
             on_added_group_attribute,
             request
         )
