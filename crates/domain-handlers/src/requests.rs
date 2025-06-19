@@ -63,6 +63,7 @@ pub struct RemoveUserFromGroupRequest {
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
 pub struct ListUsersRequest {
     pub filter: Option<UserRequestFilter>,
+    #[serde(rename = "need_groups")]
     pub need_groups: bool,
 }
 impl ListUsersRequest {

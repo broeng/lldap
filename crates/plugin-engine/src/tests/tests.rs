@@ -181,3 +181,18 @@ async fn test_lib_tables_not_empty() {
     // Verify: ensure the plugin ran correctly
     assert!(res.is_ok());
 }
+
+#[tokio::test]
+async fn test_lib_strings_split() {
+    let res = run_plugin_init(
+        new_memory_store().await,
+        r#"
+            local splitted = lldap.strings:split("hello world", " ")
+            local expected = { "hello", "world" }
+            assert_eq(lldap.tables:eq(splitted, expected), true)
+        "#,
+    )
+    .await;
+    // Verify: ensure the plugin ran correctly
+    assert!(res.is_ok());
+}

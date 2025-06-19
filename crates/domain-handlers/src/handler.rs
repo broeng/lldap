@@ -74,20 +74,33 @@ impl From<LdapSubstringFilter> for SubStringFilter {
 
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
 pub enum UserRequestFilter {
+    #[serde(rename = "true")]
     True,
+    #[serde(rename = "false")]
     False,
+    #[serde(rename = "and")]
     And(Vec<UserRequestFilter>),
+    #[serde(rename = "or")]
     Or(Vec<UserRequestFilter>),
+    #[serde(rename = "not")]
     Not(Box<UserRequestFilter>),
+    #[serde(rename = "userId")]
     UserId(UserId),
+    #[serde(rename = "userIdSubstring")]
     UserIdSubString(SubStringFilter),
+    #[serde(rename = "equality")]
     Equality(UserColumn, String),
+    #[serde(rename = "attributeEquality")]
     AttributeEquality(AttributeName, AttributeValue),
+    #[serde(rename = "fieldSubstring")]
     SubString(UserColumn, SubStringFilter),
     // Check if a user belongs to a group identified by name.
+    #[serde(rename = "memberOf")]
     MemberOf(GroupName),
     // Same, by id.
+    #[serde(rename = "memberOfId")]
     MemberOfId(GroupId),
+    #[serde(rename = "attributePresent")]
     CustomAttributePresent(AttributeName),
 }
 

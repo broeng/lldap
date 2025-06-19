@@ -1,4 +1,4 @@
-use mlua::{UserData, UserDataMethods};
+use mlua::{LuaSerdeExt, UserData, UserDataMethods};
 
 use utf16string::{BigEndian, LittleEndian, WString};
 
@@ -19,5 +19,8 @@ impl UserData for LuaStringsLib {
             let ws: WString<BigEndian> = WString::from(&s);
             Ok(ws.into_bytes())
         });
+        methods.add_method("split", |lua, _, (s, delim): (String, String)| {
+            lua.to_value(&s.split(delim.as_str()).collect::<Vec<&str>>())
+        })
     }
 }
