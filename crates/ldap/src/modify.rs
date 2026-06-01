@@ -1,4 +1,5 @@
 use crate::{
+    LdapEventHandler,
     core::{
         error::{LdapError, LdapResult},
         utils::{LdapInfo, get_user_id_from_distinguished_name},
@@ -10,14 +11,17 @@ use ldap3_proto::proto::{LdapModify, LdapModifyRequest, LdapModifyType, LdapOp, 
 use lldap_access_control::UserReadableBackendHandler;
 use lldap_auth::access_control::ValidationResults;
 use lldap_domain::types::UserId;
+use lldap_domain_handlers::handler::RequestContext;
 use lldap_opaque_handler::OpaqueHandler;
 
 async fn handle_modify_change(
     opaque_handler: &impl OpaqueHandler,
+    event_handler: &impl LdapEventHandler,
     user_id: UserId,
     credentials: &ValidationResults,
     user_is_admin: bool,
     change: &LdapModify,
+    context: &RequestContext,
 ) -> LdapResult<()> {
     if !change
         .modification
@@ -43,7 +47,7 @@ async fn handle_modify_change(
         });
     }
     if let [value] = &change.modification.vals.as_slice() {
-        password::change_password(opaque_handler, user_id, value)
+        password::change_password(opaque_handler, event_handler, user_id, value, context)
             .await
             .map_err(|e| LdapError {
                 code: LdapResultCode::Other,
@@ -63,6 +67,7 @@ async fn handle_modify_change(
 
 pub(crate) async fn handle_modify_request<'cred, UserBackendHandler>(
     opaque_handler: &impl OpaqueHandler,
+    event_handler: &impl LdapEventHandler,
     get_readable_handler: impl FnOnce(
         &'cred ValidationResults,
         UserId,
@@ -70,6 +75,7 @@ pub(crate) async fn handle_modify_request<'cred, UserBackendHandler>(
     ldap_info: &LdapInfo,
     credentials: &'cred ValidationResults,
     request: &LdapModifyRequest,
+    context: &RequestContext,
 ) -> LdapResult<Vec<LdapOp>>
 where
     // Note: ideally, get_readable_handler would take UserId by reference, but I couldn't make the lifetimes work.
@@ -90,7 +96,7 @@ where
                         uid.as_str()
                     ),
                 })?
-                .get_user_groups(&uid)
+                .get_user_groups(context, uid.clone())
                 .await
                 .map_err(|e| LdapError {
                     code: LdapResultCode::OperationsError,
@@ -101,10 +107,12 @@ where
             for change in &request.changes {
                 handle_modify_change(
                     opaque_handler,
+                    event_handler,
                     uid.clone(),
                     credentials,
                     user_is_admin,
                     change,
+                    context,
                 )
                 .await?
             }
@@ -124,6 +132,7 @@ where
 mod tests {
     use super::*;
     use crate::{
+        events::NoopLdapEventHandler,
         handler::tests::{
             setup_bound_admin_handler, setup_bound_handler_with_group,
             setup_bound_password_manager_handler,
@@ -145,11 +154,12 @@ mod tests {
         mock: &mut MockTestBackendHandler,
         target_user: &str,
         groups: Vec<&'static str>,
+        context: &RequestContext,
     ) {
         mock.expect_get_user_groups()
             .times(1)
-            .with(eq(UserId::from(target_user)))
-            .return_once(move |_| {
+            .with(eq(context.clone()), eq(UserId::from(target_user)))
+            .return_once(move |_, _| {
                 let mut g = HashSet::<GroupDetails>::new();
                 for group in groups {
                     g.insert(GroupDetails {
@@ -198,51 +208,60 @@ mod tests {
 
     #[tokio::test]
     async fn test_modify_password_of_regular_as_admin() {
+        let context = RequestContext::empty();
         let mut mock = MockTestBackendHandler::new();
-        setup_target_user_groups(&mut mock, "bob", Vec::new());
+        let event_mock = NoopLdapEventHandler::new();
+        setup_target_user_groups(&mut mock, "bob", Vec::new(), &context);
         expect_password_change(&mut mock, "bob");
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_password_modify_request("bob");
         assert_eq!(
-            ldap_handler.do_modify_request(&request).await,
+            ldap_handler.do_modify_request(&context, &request).await,
             make_modify_success_response()
         );
     }
 
     #[tokio::test]
     async fn test_modify_password_of_regular_as_regular() {
+        let context = RequestContext::empty();
         let mut mock = MockTestBackendHandler::new();
-        setup_target_user_groups(&mut mock, "test", Vec::new());
+        let event_mock = NoopLdapEventHandler::new();
+        setup_target_user_groups(&mut mock, "test", Vec::new(), &context);
         expect_password_change(&mut mock, "test");
-        let ldap_handler = setup_bound_handler_with_group(mock, "regular").await;
+        let ldap_handler =
+            setup_bound_handler_with_group(mock, event_mock, "regular", &context).await;
         let request = make_password_modify_request("test");
         assert_eq!(
-            ldap_handler.do_modify_request(&request).await,
+            ldap_handler.do_modify_request(&context, &request).await,
             make_modify_success_response()
         );
     }
 
     #[tokio::test]
     async fn test_modify_password_of_regular_as_password_manager() {
+        let context = RequestContext::empty();
         let mut mock = MockTestBackendHandler::new();
-        setup_target_user_groups(&mut mock, "bob", Vec::new());
+        let event_mock = NoopLdapEventHandler::new();
+        setup_target_user_groups(&mut mock, "bob", Vec::new(), &context);
         expect_password_change(&mut mock, "bob");
-        let ldap_handler = setup_bound_password_manager_handler(mock).await;
+        let ldap_handler = setup_bound_password_manager_handler(mock, event_mock, &context).await;
         let request = make_password_modify_request("bob");
         assert_eq!(
-            ldap_handler.do_modify_request(&request).await,
+            ldap_handler.do_modify_request(&context, &request).await,
             make_modify_success_response()
         );
     }
 
     #[tokio::test]
     async fn test_modify_password_of_admin_as_password_manager() {
+        let context = RequestContext::empty();
         let mut mock = MockTestBackendHandler::new();
-        setup_target_user_groups(&mut mock, "bob", vec!["lldap_admin"]);
-        let ldap_handler = setup_bound_password_manager_handler(mock).await;
+        let event_mock = NoopLdapEventHandler::new();
+        setup_target_user_groups(&mut mock, "bob", vec!["lldap_admin"], &context);
+        let ldap_handler = setup_bound_password_manager_handler(mock, event_mock, &context).await;
         let request = make_password_modify_request("bob");
         assert_eq!(
-            ldap_handler.do_modify_request(&request).await,
+            ldap_handler.do_modify_request(&context, &request).await,
             make_modify_failure_response(
                 LdapResultCode::InsufficentAccessRights,
                 "User `test` cannot modify the password of user `bob`"
@@ -252,11 +271,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_modify_password_of_other_regular_as_regular() {
-        let ldap_handler =
-            setup_bound_handler_with_group(MockTestBackendHandler::new(), "regular").await;
+        let context = RequestContext::empty();
+        let event_mock = NoopLdapEventHandler::new();
+        let ldap_handler = setup_bound_handler_with_group(
+            MockTestBackendHandler::new(),
+            event_mock,
+            "regular",
+            &context,
+        )
+        .await;
         let request = make_password_modify_request("bob");
         assert_eq!(
-            ldap_handler.do_modify_request(&request).await,
+            ldap_handler.do_modify_request(&context, &request).await,
             make_modify_failure_response(
                 LdapResultCode::InsufficentAccessRights,
                 "User `test` cannot modify user `bob`"
@@ -266,22 +292,26 @@ mod tests {
 
     #[tokio::test]
     async fn test_modify_password_of_admin_as_admin() {
+        let context = RequestContext::empty();
         let mut mock = MockTestBackendHandler::new();
-        setup_target_user_groups(&mut mock, "test", vec!["lldap_admin"]);
+        let event_mock = NoopLdapEventHandler::new();
+        setup_target_user_groups(&mut mock, "test", vec!["lldap_admin"], &context);
         expect_password_change(&mut mock, "test");
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_password_modify_request("test");
         assert_eq!(
-            ldap_handler.do_modify_request(&request).await,
+            ldap_handler.do_modify_request(&context, &request).await,
             make_modify_success_response()
         );
     }
 
     #[tokio::test]
     async fn test_modify_password_invalid_number_of_values() {
+        let context = RequestContext::empty();
         let mut mock = MockTestBackendHandler::new();
-        setup_target_user_groups(&mut mock, "bob", Vec::new());
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let event_mock = NoopLdapEventHandler::new();
+        setup_target_user_groups(&mut mock, "bob", Vec::new(), &context);
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = {
             let target_user = "bob";
             LdapModifyRequest {
@@ -296,7 +326,7 @@ mod tests {
             }
         };
         assert_eq!(
-            ldap_handler.do_modify_request(&request).await,
+            ldap_handler.do_modify_request(&context, &request).await,
             make_modify_failure_response(
                 LdapResultCode::InvalidAttributeSyntax,
                 "Wrong number of values for password attribute: 2"

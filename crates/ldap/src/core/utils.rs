@@ -303,6 +303,7 @@ pub fn map_group_field(field: &AttributeName, schema: &PublicSchema) -> GroupFie
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct LdapInfo {
     pub base_dn: Vec<(String, String)>,
     pub base_dn_str: String,

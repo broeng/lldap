@@ -15,7 +15,10 @@ use lldap_domain::{
     public_schema::PublicSchema,
     types::{AttributeName, AttributeType, Group, GroupId, LdapObjectClass, UserId, Uuid},
 };
-use lldap_domain_handlers::handler::{GroupListerBackendHandler, GroupRequestFilter};
+use lldap_domain_handlers::{
+    handler::{GroupListerBackendHandler, GroupRequestFilter, RequestContext},
+    requests::ListGroupsRequest,
+};
 use tracing::{debug, instrument, warn};
 
 pub const REQUIRED_GROUP_ATTRIBUTES: &[&str] = &["display_name"];
@@ -202,7 +205,7 @@ fn get_group_attribute_equality_filter(
     }
 }
 
-fn convert_group_filter(
+pub fn convert_group_filter(
     ldap_info: &LdapInfo,
     filter: &LdapFilter,
     schema: &PublicSchema,
@@ -361,11 +364,17 @@ pub async fn get_groups_list<Backend: GroupListerBackendHandler>(
     base: &str,
     backend: &Backend,
     schema: &PublicSchema,
+    request_context: &RequestContext,
 ) -> LdapResult<Vec<Group>> {
     let filters = convert_group_filter(ldap_info, ldap_filter, schema)?;
     debug!(?filters);
     backend
-        .list_groups(Some(filters))
+        .list_groups(
+            request_context,
+            ListGroupsRequest {
+                filter: Some(filters),
+            },
+        )
         .await
         .map_err(|e| LdapError {
             code: LdapResultCode::Other,
@@ -402,6 +411,7 @@ pub fn convert_groups_to_ldap_op<'a>(
 mod tests {
     use super::*;
     use crate::{
+        events::NoopLdapEventHandler,
         handler::tests::{make_group_search_request, setup_bound_admin_handler},
         search::{make_search_request, make_search_success},
     };
@@ -418,10 +428,17 @@ mod tests {
     #[tokio::test]
     async fn test_search_groups() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::admin("test");
         mock.expect_list_groups()
-            .with(eq(Some(GroupRequestFilter::True)))
+            .with(
+                eq(context.clone()),
+                eq(ListGroupsRequest {
+                    filter: Some(GroupRequestFilter::True),
+                }),
+            )
             .times(1)
-            .return_once(|_| {
+            .return_once(|_, _| {
                 Ok(vec![
                     Group {
                         id: GroupId(1),
@@ -443,7 +460,7 @@ mod tests {
                     },
                 ])
             });
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_group_search_request(
             LdapFilter::And(vec![]),
             vec![
@@ -456,7 +473,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![
                 LdapOp::SearchResultEntry(LdapSearchResultEntry {
                     dn: "cn=group_1,ou=groups,dc=example,dc=com".to_string(),
@@ -475,7 +492,7 @@ mod tests {
                         },
                         LdapPartialAttribute {
                             atype: "objectClass".to_string(),
-                            vals: vec![b"groupOfUniqueNames".to_vec(), b"groupOfNames".to_vec()]
+                            vals: vec![b"groupOfUniqueNames".to_vec(), b"groupOfNames".to_vec(),],
                         },
                         LdapPartialAttribute {
                             atype: "uniqueMember".to_string(),
@@ -519,10 +536,17 @@ mod tests {
     #[tokio::test]
     async fn test_search_groups_by_groupid() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_groups()
-            .with(eq(Some(GroupRequestFilter::GroupId(GroupId(1)))))
+            .with(
+                eq(context.clone()),
+                eq(ListGroupsRequest {
+                    filter: Some(GroupRequestFilter::GroupId(GroupId(1))),
+                }),
+            )
             .times(1)
-            .return_once(|_| {
+            .return_once(|_, _| {
                 Ok(vec![Group {
                     display_name: "group_1".into(),
                     id: GroupId(1),
@@ -533,13 +557,13 @@ mod tests {
                     modified_date: chrono::Utc.timestamp_opt(42, 42).unwrap().naive_utc(),
                 }])
             });
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_group_search_request(
             LdapFilter::Equality("groupid".to_string(), "1".to_string()),
             vec!["dn"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![
                 LdapOp::SearchResultEntry(LdapSearchResultEntry {
                     dn: "cn=group_1,ou=groups,dc=example,dc=com".to_string(),
@@ -553,22 +577,29 @@ mod tests {
     #[tokio::test]
     async fn test_search_groups_filter() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_groups()
-            .with(eq(Some(GroupRequestFilter::And(vec![
-                GroupRequestFilter::DisplayName("group_1".into()),
-                GroupRequestFilter::Member(UserId::new("bob")),
-                GroupRequestFilter::DisplayName("rockstars".into()),
-                false.into(),
-                GroupRequestFilter::Uuid(uuid!("04ac75e0-2900-3e21-926c-2f732c26b3fc")),
-                false.into(),
-                GroupRequestFilter::DisplayNameSubString(SubStringFilter {
-                    initial: Some("iNIt".to_owned()),
-                    any: vec!["1".to_owned(), "2aA".to_owned()],
-                    final_: Some("finAl".to_owned()),
+            .with(
+                eq(context.clone()),
+                eq(ListGroupsRequest {
+                    filter: Some(GroupRequestFilter::And(vec![
+                        GroupRequestFilter::DisplayName("group_1".into()),
+                        GroupRequestFilter::Member(UserId::new("bob")),
+                        GroupRequestFilter::DisplayName("rockstars".into()),
+                        false.into(),
+                        GroupRequestFilter::Uuid(uuid!("04ac75e0-2900-3e21-926c-2f732c26b3fc")),
+                        false.into(),
+                        GroupRequestFilter::DisplayNameSubString(SubStringFilter {
+                            initial: Some("iNIt".to_owned()),
+                            any: vec!["1".to_owned(), "2aA".to_owned()],
+                            final_: Some("finAl".to_owned()),
+                        }),
+                    ])),
                 }),
-            ]))))
+            )
             .times(1)
-            .return_once(|_| {
+            .return_once(|_, _| {
                 Ok(vec![Group {
                     display_name: "group_1".into(),
                     id: GroupId(1),
@@ -579,7 +610,7 @@ mod tests {
                     modified_date: chrono::Utc.timestamp_opt(42, 42).unwrap().naive_utc(),
                 }])
             });
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_group_search_request(
             LdapFilter::And(vec![
                 LdapFilter::Equality("cN".to_string(), "Group_1".to_string()),
@@ -619,7 +650,7 @@ mod tests {
             vec!["1.1"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![
                 LdapOp::SearchResultEntry(LdapSearchResultEntry {
                     dn: "cn=group_1,ou=groups,dc=example,dc=com".to_string(),
@@ -633,14 +664,21 @@ mod tests {
     #[tokio::test]
     async fn test_search_groups_filter_2() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_groups()
-            .with(eq(Some(GroupRequestFilter::Or(vec![
-                GroupRequestFilter::DisplayName("group_1".into()),
-                GroupRequestFilter::Member(UserId::new("bob")),
-            ]))))
+            .with(
+                eq(context.clone()),
+                eq(ListGroupsRequest {
+                    filter: Some(GroupRequestFilter::Or(vec![
+                        GroupRequestFilter::DisplayName("group_1".into()),
+                        GroupRequestFilter::Member(UserId::new("bob")),
+                    ])),
+                }),
+            )
             .times(1)
-            .return_once(|_| Ok(vec![]));
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+            .return_once(|_, _| Ok(vec![]));
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_group_search_request(
             LdapFilter::Or(vec![
                 LdapFilter::Equality("cn".to_string(), "group_1".to_string()),
@@ -652,7 +690,7 @@ mod tests {
             vec!["cn"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![make_search_success()])
         );
     }
@@ -660,13 +698,20 @@ mod tests {
     #[tokio::test]
     async fn test_search_groups_filter_3() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_groups()
-            .with(eq(Some(GroupRequestFilter::Not(Box::new(
-                GroupRequestFilter::DisplayName("group_1".into()),
-            )))))
+            .with(
+                eq(context.clone()),
+                eq(ListGroupsRequest {
+                    filter: Some(GroupRequestFilter::Not(Box::new(
+                        GroupRequestFilter::DisplayName("group_1".into()),
+                    ))),
+                }),
+            )
             .times(1)
-            .return_once(|_| Ok(vec![]));
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+            .return_once(|_, _| Ok(vec![]));
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_group_search_request(
             LdapFilter::Not(Box::new(LdapFilter::Equality(
                 "cn".to_string(),
@@ -675,7 +720,7 @@ mod tests {
             vec!["cn"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![make_search_success()])
         );
     }
@@ -684,7 +729,9 @@ mod tests {
     async fn test_equality_filter_on_list_group_attribute_returns_error() {
         use lldap_domain::schema::{AttributeList, AttributeSchema, Schema};
         let mut mock = MockTestBackendHandler::new();
-        mock.expect_get_schema().returning(|| {
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
+        mock.expect_get_schema().returning(|_| {
             Ok(Schema {
                 user_attributes: AttributeList {
                     attributes: Vec::new(),
@@ -704,13 +751,13 @@ mod tests {
                 extra_group_object_classes: Vec::new(),
             })
         });
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_group_search_request(
             LdapFilter::Equality("tags".to_string(), "foo".to_string()),
             vec!["dn"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Err(LdapError {
                 code: LdapResultCode::UnwillingToPerform,
                 message: r#"Equality filter on list attribute "tags" is not supported"#.to_string(),
@@ -722,7 +769,9 @@ mod tests {
     async fn test_equality_filter_on_non_list_group_attribute() {
         use lldap_domain::schema::{AttributeList, AttributeSchema, Schema};
         let mut mock = MockTestBackendHandler::new();
-        mock.expect_get_schema().returning(|| {
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
+        mock.expect_get_schema().returning(|_| {
             Ok(Schema {
                 user_attributes: AttributeList {
                     attributes: Vec::new(),
@@ -744,14 +793,14 @@ mod tests {
         });
         mock.expect_list_groups()
             .times(1)
-            .return_once(|_| Ok(vec![]));
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+            .return_once(|_, _| Ok(vec![]));
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_group_search_request(
             LdapFilter::Equality("club_name".to_string(), "myclub".to_string()),
             vec!["dn"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![make_search_success()])
         );
     }
@@ -759,18 +808,25 @@ mod tests {
     #[tokio::test]
     async fn test_search_group_as_scope() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_groups()
-            .with(eq(Some(GroupRequestFilter::DisplayName("group_1".into()))))
+            .with(
+                eq(context.clone()),
+                eq(ListGroupsRequest {
+                    filter: Some(GroupRequestFilter::DisplayName("group_1".into())),
+                }),
+            )
             .times(1)
-            .return_once(|_| Ok(vec![]));
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+            .return_once(|_, _| Ok(vec![]));
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_search_request(
             "cn=group_1,ou=groups,dc=example,dc=com",
             LdapFilter::And(vec![]),
             vec!["objectClass"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![make_search_success()]),
         );
     }

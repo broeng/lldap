@@ -1,22 +1,25 @@
-use crate::core::{
-    error::{LdapError, LdapResult},
-    group::{convert_groups_to_ldap_op, get_groups_list},
-    user::{convert_users_to_ldap_op, get_user_list},
-    utils::{LdapInfo, LdapSchemaDescription, is_subtree, parse_distinguished_name},
+use crate::{
+    LdapEventHandler,
+    core::{
+        error::{LdapError, LdapResult},
+        group::{convert_groups_to_ldap_op, get_groups_list},
+        user::{convert_users_to_ldap_op, get_user_list},
+        utils::{LdapInfo, LdapSchemaDescription, is_subtree, parse_distinguished_name},
+    },
 };
 use chrono::Utc;
-use ldap3_proto::{
-    LdapFilter, LdapPartialAttribute, LdapResultCode, LdapSearchResultEntry, LdapSearchScope,
-    proto::{
-        LdapDerefAliases, LdapOp, LdapResult as LdapResultOp, LdapSearchRequest,
-        OID_PASSWORD_MODIFY, OID_WHOAMI,
-    },
+use ldap3_proto::proto::{
+    LdapDerefAliases, LdapFilter, LdapOp, LdapPartialAttribute, LdapResult as LdapResultOp,
+    LdapResultCode, LdapSearchRequest, LdapSearchResultEntry, LdapSearchScope, OID_PASSWORD_MODIFY,
+    OID_WHOAMI,
 };
 use lldap_access_control::UserAndGroupListerBackendHandler;
 use lldap_domain::{
     public_schema::PublicSchema,
     types::{Group, UserAndGroups},
 };
+use lldap_domain_handlers::handler::RequestContext;
+use lldap_plugin_engine::api::arguments::ldap_search_result::SearchResult;
 use tracing::{debug, warn};
 
 #[derive(Debug)]
@@ -32,10 +35,31 @@ enum SearchScope {
     Invalid,
 }
 
-enum InternalSearchResults {
+#[derive(Clone)]
+pub enum InternalSearchResults {
     UsersAndGroups(Vec<UserAndGroups>, Vec<Group>),
     Raw(Vec<LdapOp>),
     Empty,
+}
+
+impl From<SearchResult> for InternalSearchResults {
+    fn from(value: SearchResult) -> Self {
+        match value {
+            SearchResult::UsersAndGroups(u, g) => InternalSearchResults::UsersAndGroups(u, g),
+            SearchResult::Ldap(vec) => InternalSearchResults::Raw(vec),
+            SearchResult::Empty => InternalSearchResults::Empty,
+        }
+    }
+}
+
+impl Into<SearchResult> for InternalSearchResults {
+    fn into(self) -> SearchResult {
+        match self {
+            InternalSearchResults::UsersAndGroups(u, g) => SearchResult::UsersAndGroups(u, g),
+            InternalSearchResults::Raw(ldap_ops) => SearchResult::Ldap(ldap_ops),
+            InternalSearchResults::Empty => SearchResult::Empty,
+        }
+    }
 }
 
 fn get_search_scope(
@@ -113,8 +137,8 @@ pub(crate) fn make_search_error(code: LdapResultCode, message: String) -> LdapOp
     })
 }
 
-pub(crate) fn root_dse_response(base_dn: &str) -> LdapOp {
-    LdapOp::SearchResultEntry(LdapSearchResultEntry {
+pub(crate) fn root_dse_response(base_dn: &str) -> LdapSearchResultEntry {
+    LdapSearchResultEntry {
         dn: "".to_string(),
         attributes: vec![
             LdapPartialAttribute {
@@ -170,7 +194,7 @@ pub(crate) fn root_dse_response(base_dn: &str) -> LdapOp {
                 vals: vec![b"cn=Subschema".to_vec()],
             },
         ],
-    })
+    }
 }
 
 pub fn make_ldap_subschema_entry(schema: PublicSchema) -> LdapOp {
@@ -304,6 +328,7 @@ async fn do_search_internal(
     backend_handler: &impl UserAndGroupListerBackendHandler,
     request: &LdapSearchRequest,
     schema: &PublicSchema,
+    context: &RequestContext,
 ) -> LdapResult<InternalSearchResults> {
     let dn_parts = parse_distinguished_name(&request.base.to_ascii_lowercase())?;
     let scope = get_search_scope(&ldap_info.base_dn, &dn_parts, &request.scope);
@@ -328,11 +353,20 @@ async fn do_search_internal(
             &request.base,
             backend_handler,
             schema,
+            context,
         )
         .await
     });
     let get_group_list = cast(|filter: &LdapFilter| async {
-        get_groups_list(ldap_info, filter, &request.base, backend_handler, schema).await
+        get_groups_list(
+            ldap_info,
+            filter,
+            &request.base,
+            backend_handler,
+            schema,
+            context,
+        )
+        .await
     });
     Ok(match scope {
         SearchScope::Global => {
@@ -396,16 +430,30 @@ async fn do_search_internal(
     })
 }
 
-pub async fn do_search(
+pub async fn do_search<Events: LdapEventHandler>(
     backend_handler: &impl UserAndGroupListerBackendHandler,
+    event_handler: &Events,
     ldap_info: &LdapInfo,
     request: &LdapSearchRequest,
+    context: &RequestContext,
 ) -> LdapResult<Vec<LdapOp>> {
-    let schema = PublicSchema::from(backend_handler.get_schema().await.map_err(|e| LdapError {
-        code: LdapResultCode::OperationsError,
-        message: format!("Unable to get schema: {e:#}"),
-    })?);
-    let search_results = do_search_internal(ldap_info, backend_handler, request, &schema).await?;
+    let schema =
+        PublicSchema::from(
+            backend_handler
+                .get_schema(context)
+                .await
+                .map_err(|e| LdapError {
+                    code: LdapResultCode::OperationsError,
+                    message: format!("Unable to get schema: {:#}", e),
+                })?,
+        );
+    let search_results = event_handler
+        .on_ldap_search_result(
+            context,
+            &request,
+            do_search_internal(ldap_info, backend_handler, request, &schema, context).await?,
+        )
+        .await;
     let mut results = match search_results {
         InternalSearchResults::UsersAndGroups(users, groups) => {
             convert_users_to_ldap_op(users, &request.attrs, ldap_info, &schema)
@@ -440,6 +488,7 @@ mod tests {
     use super::*;
     use crate::{
         core::error::LdapError,
+        events::NoopLdapEventHandler,
         handler::tests::{
             make_group_search_request, make_user_search_request, setup_bound_admin_handler,
             setup_bound_readonly_handler,
@@ -455,7 +504,10 @@ mod tests {
         },
         uuid,
     };
-    use lldap_domain_handlers::handler::*;
+    use lldap_domain_handlers::{
+        handler::*,
+        requests::{ListGroupsRequest, ListUsersRequest},
+    };
     use lldap_domain_model::model::UserColumn;
     use lldap_test_utils::MockTestBackendHandler;
     use mockall::predicate::eq;
@@ -485,7 +537,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_root_dse() {
-        let ldap_handler = setup_bound_admin_handler(MockTestBackendHandler::new()).await;
+        let context = RequestContext::empty();
+        let ldap_handler = setup_bound_admin_handler(
+            MockTestBackendHandler::new(),
+            NoopLdapEventHandler::new(),
+            &context,
+        )
+        .await;
         let request = LdapSearchRequest {
             base: "".to_string(),
             scope: LdapSearchScope::Base,
@@ -497,9 +555,9 @@ mod tests {
             attrs: vec!["supportedExtension".to_string()],
         };
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![
-                root_dse_response("dc=example,dc=com"),
+                LdapOp::SearchResultEntry(root_dse_response("dc=example,dc=com")),
                 make_search_success()
             ])
         );
@@ -507,7 +565,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_subschema_response() {
-        let ldap_handler = setup_bound_admin_handler(MockTestBackendHandler::new()).await;
+        let context = RequestContext::empty();
+        let ldap_handler = setup_bound_admin_handler(
+            MockTestBackendHandler::new(),
+            NoopLdapEventHandler::new(),
+            &context,
+        )
+        .await;
 
         let request = LdapSearchRequest {
             base: "cn=Subschema".to_string(),
@@ -520,7 +584,10 @@ mod tests {
             attrs: vec!["supportedExtension".to_string()],
         };
 
-        let actual_reponse: Vec<LdapOp> = ldap_handler.do_search_or_dse(&request).await.unwrap();
+        let actual_reponse: Vec<LdapOp> = ldap_handler
+            .do_search_or_dse(&context, &request)
+            .await
+            .unwrap();
 
         let LdapOp::SearchResultEntry(search_result_entry) = &actual_reponse[0] else {
             panic!("Expected SearchResultEntry");
@@ -669,13 +736,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_groups_unsupported_substring() {
-        let ldap_handler = setup_bound_readonly_handler(MockTestBackendHandler::new()).await;
+        let context = RequestContext::empty();
+        let event_mock = NoopLdapEventHandler::new();
+        let ldap_handler =
+            setup_bound_readonly_handler(MockTestBackendHandler::new(), event_mock, &context).await;
         let request = make_group_search_request(
             LdapFilter::Substring("member".to_owned(), LdapSubstringFilter::default()),
             vec!["cn"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Err(LdapError {
                 code: LdapResultCode::UnwillingToPerform,
                 message: r#"Unsupported group attribute for substring filter: "member""#.to_owned()
@@ -685,18 +755,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_groups_missing_attribute_substring() {
+        let context = RequestContext::empty();
         let request = make_group_search_request(
             LdapFilter::Substring("nonexistent".to_owned(), LdapSubstringFilter::default()),
             vec!["cn"],
         );
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_list_groups()
-            .with(eq(Some(false.into())))
+            .with(
+                eq(context.clone()),
+                eq(ListGroupsRequest {
+                    filter: Some(false.into()),
+                }),
+            )
             .times(1)
-            .return_once(|_| Ok(vec![]));
-        let ldap_handler = setup_bound_readonly_handler(mock).await;
+            .return_once(|_, _| Ok(vec![]));
+        let ldap_handler = setup_bound_readonly_handler(mock, event_mock, &context).await;
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![make_search_success()]),
         );
     }
@@ -704,17 +781,24 @@ mod tests {
     #[tokio::test]
     async fn test_search_groups_error() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_groups()
-            .with(eq(Some(GroupRequestFilter::Not(Box::new(
-                GroupRequestFilter::DisplayName("group_2".into()),
-            )))))
+            .with(
+                eq(context.clone()),
+                eq(ListGroupsRequest {
+                    filter: Some(GroupRequestFilter::Not(Box::new(
+                        GroupRequestFilter::DisplayName("group_2".into()),
+                    ))),
+                }),
+            )
             .times(1)
-            .return_once(|_| {
+            .return_once(|_, _| {
                 Err(lldap_domain_model::error::DomainError::InternalError(
                     "Error getting groups".to_string(),
                 ))
             });
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_group_search_request(
             LdapFilter::Or(vec![LdapFilter::Not(Box::new(LdapFilter::Equality(
                 "displayname".to_string(),
@@ -723,7 +807,7 @@ mod tests {
             vec!["cn"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Err(LdapError{
                 code: LdapResultCode::Other,
                 message: r#"Error while listing groups "ou=groups,dc=example,dc=com": Internal error: `Error getting groups`"#.to_string()
@@ -733,7 +817,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_groups_filter_error() {
-        let ldap_handler = setup_bound_admin_handler(MockTestBackendHandler::new()).await;
+        let context = RequestContext::empty();
+        let event_mock = NoopLdapEventHandler::new();
+        let ldap_handler =
+            setup_bound_admin_handler(MockTestBackendHandler::new(), event_mock, &context).await;
         let request = make_group_search_request(
             LdapFilter::And(vec![LdapFilter::Approx(
                 "whatever".to_owned(),
@@ -742,7 +829,7 @@ mod tests {
             vec!["cn"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Err(LdapError {
                 code: LdapResultCode::UnwillingToPerform,
                 message: r#"Unsupported group filter: Approx("whatever", "value")"#.to_string()
@@ -753,41 +840,48 @@ mod tests {
     #[tokio::test]
     async fn test_search_filters() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_users()
             .with(
-                eq(Some(UserRequestFilter::Or(vec![
-                    UserRequestFilter::Not(Box::new(UserRequestFilter::UserId(UserId::new("bob")))),
-                    UserRequestFilter::UserId("bob_1".to_string().into()),
-                    true.into(),
-                    true.into(),
-                    true.into(),
-                    UserRequestFilter::AttributeEquality(
-                        AttributeName::from("first_name"),
-                        "FirstName".to_string().into(),
-                    ),
-                    UserRequestFilter::AttributeEquality(
-                        AttributeName::from("first_name"),
-                        "firstname".to_string().into(),
-                    ),
-                    UserRequestFilter::UserIdSubString(SubStringFilter {
-                        initial: Some("iNIt".to_owned()),
-                        any: vec!["1".to_owned(), "2aA".to_owned()],
-                        final_: Some("finAl".to_owned()),
-                    }),
-                    UserRequestFilter::SubString(
-                        UserColumn::DisplayName,
-                        SubStringFilter {
+                eq(context.clone()),
+                eq(ListUsersRequest {
+                    filter: Some(UserRequestFilter::Or(vec![
+                        UserRequestFilter::Not(Box::new(UserRequestFilter::UserId(UserId::new(
+                            "bob",
+                        )))),
+                        UserRequestFilter::UserId("bob_1".to_string().into()),
+                        true.into(),
+                        true.into(),
+                        true.into(),
+                        UserRequestFilter::AttributeEquality(
+                            AttributeName::from("first_name"),
+                            "FirstName".to_string().into(),
+                        ),
+                        UserRequestFilter::AttributeEquality(
+                            AttributeName::from("first_name"),
+                            "firstname".to_string().into(),
+                        ),
+                        UserRequestFilter::UserIdSubString(SubStringFilter {
                             initial: Some("iNIt".to_owned()),
                             any: vec!["1".to_owned(), "2aA".to_owned()],
                             final_: Some("finAl".to_owned()),
-                        },
-                    ),
-                ]))),
-                eq(false),
+                        }),
+                        UserRequestFilter::SubString(
+                            UserColumn::DisplayName,
+                            SubStringFilter {
+                                initial: Some("iNIt".to_owned()),
+                                any: vec!["1".to_owned(), "2aA".to_owned()],
+                                final_: Some("finAl".to_owned()),
+                            },
+                        ),
+                    ])),
+                    need_groups: true,
+                }),
             )
             .times(1)
             .return_once(|_, _| Ok(vec![]));
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_user_search_request(
             LdapFilter::And(vec![LdapFilter::Or(vec![
                 LdapFilter::Not(Box::new(LdapFilter::Equality(
@@ -829,14 +923,17 @@ mod tests {
             vec!["objectClass"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![make_search_success()])
         );
     }
 
     #[tokio::test]
     async fn test_search_unsupported_substring_filter() {
-        let ldap_handler = setup_bound_admin_handler(MockTestBackendHandler::new()).await;
+        let context = RequestContext::empty();
+        let mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_user_search_request(
             LdapFilter::Substring(
                 "uuid".to_owned(),
@@ -848,7 +945,10 @@ mod tests {
             ),
             vec!["objectClass"],
         );
-        ldap_handler.do_search_or_dse(&request).await.unwrap_err();
+        ldap_handler
+            .do_search_or_dse(&context, &request)
+            .await
+            .unwrap_err();
         let request = make_user_search_request(
             LdapFilter::Substring(
                 "givenname".to_owned(),
@@ -860,20 +960,28 @@ mod tests {
             ),
             vec!["objectClass"],
         );
-        ldap_handler.do_search_or_dse(&request).await.unwrap_err();
+        ldap_handler
+            .do_search_or_dse(&context, &request)
+            .await
+            .unwrap_err();
     }
 
     #[tokio::test]
     async fn test_search_member_of_filter() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_users()
             .with(
-                eq(Some(UserRequestFilter::MemberOf("group_1".into()))),
-                eq(false),
+                eq(context.clone()),
+                eq(ListUsersRequest {
+                    filter: Some(UserRequestFilter::MemberOf("group_1".into())),
+                    need_groups: true,
+                }),
             )
             .times(2)
             .returning(|_, _| Ok(vec![]));
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_user_search_request(
             LdapFilter::Equality(
                 "memberOf".to_string(),
@@ -882,7 +990,7 @@ mod tests {
             vec!["objectClass"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![make_search_success()])
         );
         let request = make_user_search_request(
@@ -890,7 +998,7 @@ mod tests {
             vec!["objectClass"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![make_search_success()])
         );
     }
@@ -898,11 +1006,19 @@ mod tests {
     #[tokio::test]
     async fn test_search_member_of_filter_error() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_users()
-            .with(eq(Some(UserRequestFilter::from(false))), eq(false))
+            .with(
+                eq(context.clone()),
+                eq(ListUsersRequest {
+                    filter: Some(UserRequestFilter::from(false)),
+                    need_groups: true,
+                }),
+            )
             .times(1)
             .returning(|_, _| Ok(vec![]));
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_user_search_request(
             LdapFilter::Equality(
                 "memberOf".to_string(),
@@ -911,7 +1027,7 @@ mod tests {
             vec!["objectClass"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             // The error is ignored, a warning is printed.
             Ok(vec![make_search_success()])
         );
@@ -920,12 +1036,17 @@ mod tests {
     #[tokio::test]
     async fn test_search_filters_lowercase() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_users()
             .with(
-                eq(Some(UserRequestFilter::Not(Box::new(
-                    UserRequestFilter::Equality(UserColumn::DisplayName, "bob".to_string()),
-                )))),
-                eq(false),
+                eq(context.clone()),
+                eq(ListUsersRequest {
+                    filter: Some(UserRequestFilter::Not(Box::new(
+                        UserRequestFilter::Equality(UserColumn::DisplayName, "bob".to_string()),
+                    ))),
+                    need_groups: true,
+                }),
             )
             .times(1)
             .return_once(|_, _| {
@@ -937,7 +1058,7 @@ mod tests {
                     groups: None,
                 }])
             });
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_user_search_request(
             LdapFilter::And(vec![LdapFilter::Or(vec![LdapFilter::Not(Box::new(
                 LdapFilter::Equality("displayname".to_string(), "bob".to_string()),
@@ -945,7 +1066,7 @@ mod tests {
             vec!["objectclass"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![
                 LdapOp::SearchResultEntry(LdapSearchResultEntry {
                     dn: "uid=bob_1,ou=people,dc=example,dc=com".to_string(),
@@ -968,8 +1089,16 @@ mod tests {
     #[tokio::test]
     async fn test_search_filters_custom_object_class() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_users()
-            .with(eq(Some(UserRequestFilter::from(true))), eq(false))
+            .with(
+                eq(context.clone()),
+                eq(ListUsersRequest {
+                    filter: Some(UserRequestFilter::from(true)),
+                    need_groups: true,
+                }),
+            )
             .times(1)
             .return_once(|_, _| {
                 Ok(vec![UserAndGroups {
@@ -980,13 +1109,13 @@ mod tests {
                     groups: None,
                 }])
             });
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_user_search_request(
             LdapFilter::Equality("objectClass".to_owned(), "CUSTOMuserCLASS".to_owned()),
             vec!["objectclass"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![
                 LdapOp::SearchResultEntry(LdapSearchResultEntry {
                     dn: "uid=bob_1,ou=people,dc=example,dc=com".to_string(),
@@ -1009,6 +1138,8 @@ mod tests {
     #[tokio::test]
     async fn test_search_both() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::admin("test");
         mock.expect_list_users().times(1).return_once(|_, _| {
             Ok(vec![UserAndGroups {
                 user: User {
@@ -1031,9 +1162,14 @@ mod tests {
             }])
         });
         mock.expect_list_groups()
-            .with(eq(Some(GroupRequestFilter::True)))
+            .with(
+                eq(context.clone()),
+                eq(ListGroupsRequest {
+                    filter: Some(GroupRequestFilter::True),
+                }),
+            )
             .times(1)
-            .return_once(|_| {
+            .return_once(|_, _| {
                 Ok(vec![Group {
                     id: GroupId(1),
                     display_name: "group_1".into(),
@@ -1044,14 +1180,14 @@ mod tests {
                     modified_date: chrono::Utc.timestamp_opt(42, 42).unwrap().naive_utc(),
                 }])
             });
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_search_request(
             "dc=example,dc=com",
             LdapFilter::And(vec![]),
             vec!["objectClass", "dn", "cn"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![
                 LdapOp::SearchResultEntry(LdapSearchResultEntry {
                     dn: "uid=bob_1,ou=people,dc=example,dc=com".to_string(),
@@ -1093,6 +1229,8 @@ mod tests {
     #[tokio::test]
     async fn test_search_wildcards() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::admin("test");
 
         mock.expect_list_users().returning(|_, _| {
             Ok(vec![UserAndGroups {
@@ -1117,8 +1255,13 @@ mod tests {
             }])
         });
         mock.expect_list_groups()
-            .with(eq(Some(GroupRequestFilter::True)))
-            .returning(|_| {
+            .with(
+                eq(context.clone()),
+                eq(ListGroupsRequest {
+                    filter: Some(GroupRequestFilter::True),
+                }),
+            )
+            .returning(|_, _| {
                 Ok(vec![Group {
                     id: GroupId(1),
                     display_name: "group_1".into(),
@@ -1129,7 +1272,7 @@ mod tests {
                     modified_date: chrono::Utc.timestamp_opt(42, 42).unwrap().naive_utc(),
                 }])
             });
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
 
         // Test simple wildcard
         let request =
@@ -1232,7 +1375,7 @@ mod tests {
         ]);
 
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             expected_result
         );
 
@@ -1243,7 +1386,7 @@ mod tests {
         );
 
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request2).await,
+            ldap_handler.do_search_or_dse(&context, &request2).await,
             expected_result
         );
 
@@ -1254,7 +1397,7 @@ mod tests {
         );
 
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request3).await,
+            ldap_handler.do_search_or_dse(&context, &request3).await,
             expected_result
         );
 
@@ -1262,7 +1405,7 @@ mod tests {
             make_search_request("dc=example,dc=com", LdapFilter::And(vec![]), vec![""; 0]);
 
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request4).await,
+            ldap_handler.do_search_or_dse(&context, &request4).await,
             expected_result
         );
 
@@ -1273,34 +1416,40 @@ mod tests {
         );
 
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request5).await,
+            ldap_handler.do_search_or_dse(&context, &request5).await,
             expected_result
         );
     }
 
     #[tokio::test]
     async fn test_search_wrong_base() {
-        let ldap_handler = setup_bound_admin_handler(MockTestBackendHandler::new()).await;
+        let context = RequestContext::empty();
+        let mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_search_request(
             "ou=users,dc=example,dc=com",
             LdapFilter::And(vec![]),
             vec!["objectClass"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![make_search_success()])
         );
     }
 
     #[tokio::test]
     async fn test_search_unsupported_filters() {
-        let ldap_handler = setup_bound_admin_handler(MockTestBackendHandler::new()).await;
+        let context = RequestContext::empty();
+        let mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_user_search_request(
             LdapFilter::Approx("uid".to_owned(), "value".to_owned()),
             vec!["objectClass"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Err(LdapError {
                 code: LdapResultCode::UnwillingToPerform,
                 message: r#"Unsupported user filter: Approx("uid", "value")"#.to_string()
@@ -1311,24 +1460,35 @@ mod tests {
     #[tokio::test]
     async fn test_search_filter_non_attribute() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_users()
-            .with(eq(Some(true.into())), eq(false))
+            .with(
+                eq(context.clone()),
+                eq(ListUsersRequest {
+                    filter: Some(true.into()),
+                    need_groups: true,
+                }),
+            )
             .times(1)
             .return_once(|_, _| Ok(vec![]));
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_user_search_request(
             LdapFilter::Present("displayname".to_owned()),
             vec!["objectClass"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![make_search_success()])
         );
     }
 
     #[tokio::test]
     async fn test_user_ou_search() {
-        let ldap_handler = setup_bound_readonly_handler(MockTestBackendHandler::new()).await;
+        let context = RequestContext::empty();
+        let mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let ldap_handler = setup_bound_readonly_handler(mock, event_mock, &context).await;
         let request = LdapSearchRequest {
             base: "ou=people,dc=example,dc=com".to_owned(),
             scope: LdapSearchScope::Base,
@@ -1340,7 +1500,7 @@ mod tests {
             attrs: Vec::new(),
         };
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![
                 LdapOp::SearchResultEntry(LdapSearchResultEntry {
                     dn: "ou=people,dc=example,dc=com".to_owned(),
@@ -1357,6 +1517,8 @@ mod tests {
     #[tokio::test]
     async fn test_custom_attribute_read() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_users().times(1).return_once(|_, _| {
             Ok(vec![UserAndGroups {
                 user: User {
@@ -1370,7 +1532,7 @@ mod tests {
                 groups: None,
             }])
         });
-        mock.expect_list_groups().times(1).return_once(|_| {
+        mock.expect_list_groups().times(1).return_once(|_, _| {
             Ok(vec![Group {
                 id: GroupId(1),
                 display_name: "group".into(),
@@ -1384,7 +1546,7 @@ mod tests {
                 modified_date: chrono::Utc.timestamp_opt(42, 42).unwrap().naive_utc(),
             }])
         });
-        mock.expect_get_schema().returning(|| {
+        mock.expect_get_schema().returning(|_| {
             Ok(Schema {
                 user_attributes: AttributeList {
                     attributes: vec![AttributeSchema {
@@ -1415,7 +1577,7 @@ mod tests {
                 extra_group_object_classes: vec![LdapObjectClass::from("customGroupClass")],
             })
         });
-        let ldap_handler = setup_bound_readonly_handler(mock).await;
+        let ldap_handler = setup_bound_readonly_handler(mock, event_mock, &context).await;
 
         let request = make_search_request(
             "dc=example,dc=com",
@@ -1423,7 +1585,7 @@ mod tests {
             vec!["uid", "nickname", "club_name"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![
                 LdapOp::SearchResultEntry(LdapSearchResultEntry {
                     dn: "uid=test,ou=people,dc=example,dc=com".to_string(),
@@ -1459,8 +1621,10 @@ mod tests {
     #[tokio::test]
     async fn test_search_base_scope_non_existent_user() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_users().returning(|_, _| Ok(vec![]));
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = LdapSearchRequest {
             scope: LdapSearchScope::Base,
             ..make_search_request(
@@ -1470,7 +1634,7 @@ mod tests {
             )
         };
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Err(LdapError {
                 code: LdapResultCode::NoSuchObject,
                 message: "".to_string(),
@@ -1481,8 +1645,10 @@ mod tests {
     #[tokio::test]
     async fn test_search_base_scope_non_existent_group() {
         let mut mock = MockTestBackendHandler::new();
-        mock.expect_list_groups().returning(|_| Ok(vec![]));
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
+        mock.expect_list_groups().returning(|_, _| Ok(vec![]));
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = LdapSearchRequest {
             scope: LdapSearchScope::Base,
             ..make_search_request(
@@ -1492,7 +1658,7 @@ mod tests {
             )
         };
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Err(LdapError {
                 code: LdapResultCode::NoSuchObject,
                 message: "".to_string(),
@@ -1503,6 +1669,8 @@ mod tests {
     #[tokio::test]
     async fn test_search_base_scope_existing_user() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_users().returning(|_, _| {
             Ok(vec![UserAndGroups {
                 user: User {
@@ -1512,7 +1680,7 @@ mod tests {
                 groups: None,
             }])
         });
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = LdapSearchRequest {
             scope: LdapSearchScope::Base,
             ..make_search_request(
@@ -1521,7 +1689,10 @@ mod tests {
                 vec!["objectClass".to_string()],
             )
         };
-        let results = ldap_handler.do_search_or_dse(&request).await.unwrap();
+        let results = ldap_handler
+            .do_search_or_dse(&context, &request)
+            .await
+            .unwrap();
         // Should have 2 results: SearchResultEntry and SearchResultDone
         assert_eq!(results.len(), 2);
         assert!(matches!(results[0], LdapOp::SearchResultEntry(_)));

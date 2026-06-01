@@ -1,0 +1,85 @@
+[package]
+name = "lldap_plugin_engine"
+version = "0.1.0"
+authors = ["Simon Broeng Jensen <sbj@cwconsult.dk>"]
+description = "Plugin engine for LLDAP"
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+test = []
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+base64ct = "*"
+chrono = { workspace = true }
+digest = "0.10.3"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tealr_derive = "0.10"
+tracing = { workspace = true }
+tracing-log = "*"
+utf16string = "*"
+md4 = "0.10.2"
+md-5 = "0.10.4"
+sha2 = "0.10.4"
+ldap3_proto = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = "2.0"
+log = "*"
+mockall = "0.11.4"
+nix = "0.26.2"
+pretty_assertions = "1"
+
+[dependencies.base16ct]
+version = "*"
+features = ["alloc"]
+
+[dependencies.lldap_auth]
+path = "../auth"
+
+[dependencies.lldap_domain]
+path = "../domain"
+
+[dependencies.lldap_key_value_store]
+path = "../key-value-store"
+features = ["seaorm"]
+
+[dependencies.lldap_plugin_kv_store]
+path = "../plugin-kv-store"
+
+[dependencies.lldap_domain_handlers]
+path = "../domain-handlers"
+
+[dependencies.mlua]
+version = "0.10"
+features = ["serialize", "async", "send", "luajit", "vendored", "macros"]
+
+[dependencies.sea-orm]
+workspace = true
+default-features = false
+features = [
+    "macros",
+    "with-chrono",
+    "with-uuid",
+    "sqlx-all",
+    "runtime-actix-rustls",
+]
+
+[dependencies.tealr]
+version = "0.10"
+features = [
+    "derive",
+    "compile",
+    "mlua_async",
+    "mlua_send",
+    "mlua_luajit",
+    "mlua_serialize",
+]
+

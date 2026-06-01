@@ -1,19 +1,23 @@
 use async_trait::async_trait;
 use ldap3_proto::proto::LdapSubstringFilter;
+use lldap_auth::access_control::ValidationResults;
 use lldap_domain::{
-    requests::{
-        CreateAttributeRequest, CreateGroupRequest, CreateUserRequest, UpdateGroupRequest,
-        UpdateUserRequest,
-    },
     schema::Schema,
     types::{
         AttributeName, AttributeValue, Group, GroupDetails, GroupId, GroupName, LdapObjectClass,
         User, UserAndGroups, UserId, Uuid,
     },
 };
+
 use lldap_domain_model::{error::Result, model::UserColumn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+
+use crate::requests::{
+    AddUserToGroupRequest, CreateAttributeRequest, CreateGroupRequest, CreateUserRequest,
+    ListGroupsRequest, ListUsersRequest, RemoveUserFromGroupRequest, UpdateGroupRequest,
+    UpdateUserRequest,
+};
 
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
 pub struct BindRequest {
@@ -70,20 +74,33 @@ impl From<LdapSubstringFilter> for SubStringFilter {
 
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
 pub enum UserRequestFilter {
+    #[serde(rename = "true")]
     True,
+    #[serde(rename = "false")]
     False,
+    #[serde(rename = "and")]
     And(Vec<UserRequestFilter>),
+    #[serde(rename = "or")]
     Or(Vec<UserRequestFilter>),
+    #[serde(rename = "not")]
     Not(Box<UserRequestFilter>),
+    #[serde(rename = "userId")]
     UserId(UserId),
+    #[serde(rename = "userIdSubstring")]
     UserIdSubString(SubStringFilter),
+    #[serde(rename = "equality")]
     Equality(UserColumn, String),
+    #[serde(rename = "attributeEquality")]
     AttributeEquality(AttributeName, AttributeValue),
+    #[serde(rename = "fieldSubstring")]
     SubString(UserColumn, SubStringFilter),
     // Check if a user belongs to a group identified by name.
+    #[serde(rename = "memberOf")]
     MemberOf(GroupName),
     // Same, by id.
+    #[serde(rename = "memberOfId")]
     MemberOfId(GroupId),
+    #[serde(rename = "attributePresent")]
     CustomAttributePresent(AttributeName),
 }
 
@@ -95,18 +112,30 @@ impl From<bool> for UserRequestFilter {
 
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
 pub enum GroupRequestFilter {
+    #[serde(rename = "true")]
     True,
+    #[serde(rename = "false")]
     False,
+    #[serde(rename = "and")]
     And(Vec<GroupRequestFilter>),
+    #[serde(rename = "or")]
     Or(Vec<GroupRequestFilter>),
+    #[serde(rename = "not")]
     Not(Box<GroupRequestFilter>),
+    #[serde(rename = "displayName")]
     DisplayName(GroupName),
+    #[serde(rename = "displayNameSubString")]
     DisplayNameSubString(SubStringFilter),
+    #[serde(rename = "uuid")]
     Uuid(Uuid),
+    #[serde(rename = "groupId")]
     GroupId(GroupId),
     // Check if the group contains a user identified by uid.
+    #[serde(rename = "member")]
     Member(UserId),
+    #[serde(rename = "attributeEquality")]
     AttributeEquality(AttributeName, AttributeValue),
+    #[serde(rename = "attributePresent")]
     CustomAttributePresent(AttributeName),
 }
 
@@ -116,61 +145,167 @@ impl From<bool> for GroupRequestFilter {
     }
 }
 
+#[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
+pub struct RequestContext {
+    pub validation_results: Option<ValidationResults>,
+}
+
+impl RequestContext {
+    pub fn new(validation_results: Option<ValidationResults>) -> Self {
+        Self { validation_results }
+    }
+    pub fn empty() -> Self {
+        Self {
+            validation_results: None,
+        }
+    }
+    #[cfg(feature = "test")]
+    pub fn admin(name: &str) -> Self {
+        RequestContext::new(Some(ValidationResults {
+            user: UserId::new(name),
+            permission: lldap_auth::access_control::Permission::Admin,
+        }))
+    }
+    #[cfg(feature = "test")]
+    pub fn regular(name: &str) -> Self {
+        RequestContext::new(Some(ValidationResults {
+            user: UserId::new(name),
+            permission: lldap_auth::access_control::Permission::Regular,
+        }))
+    }
+    #[cfg(feature = "test")]
+    pub fn readonly(name: &str) -> Self {
+        RequestContext::new(Some(ValidationResults {
+            user: UserId::new(name),
+            permission: lldap_auth::access_control::Permission::Readonly,
+        }))
+    }
+    #[cfg(feature = "test")]
+    pub fn manager(name: &str) -> Self {
+        RequestContext::new(Some(ValidationResults {
+            user: UserId::new(name),
+            permission: lldap_auth::access_control::Permission::PasswordManager,
+        }))
+    }
+}
+
 #[async_trait]
 pub trait LoginHandler: Send + Sync {
-    async fn bind(&self, request: BindRequest) -> Result<()>;
+    async fn bind(&self, context: &RequestContext, request: BindRequest) -> Result<()>;
 }
 
 #[async_trait]
 pub trait GroupListerBackendHandler: ReadSchemaBackendHandler {
-    async fn list_groups(&self, filters: Option<GroupRequestFilter>) -> Result<Vec<Group>>;
+    async fn list_groups(
+        &self,
+        context: &RequestContext,
+        filter: ListGroupsRequest,
+    ) -> Result<Vec<Group>>;
 }
 
 #[async_trait]
 pub trait GroupBackendHandler: ReadSchemaBackendHandler {
-    async fn get_group_details(&self, group_id: GroupId) -> Result<GroupDetails>;
-    async fn update_group(&self, request: UpdateGroupRequest) -> Result<()>;
-    async fn create_group(&self, request: CreateGroupRequest) -> Result<GroupId>;
-    async fn delete_group(&self, group_id: GroupId) -> Result<()>;
+    async fn get_group_details(
+        &self,
+        context: &RequestContext,
+        group_id: GroupId,
+    ) -> Result<GroupDetails>;
+    async fn update_group(
+        &self,
+        context: &RequestContext,
+        request: UpdateGroupRequest,
+    ) -> Result<()>;
+    async fn create_group(
+        &self,
+        context: &RequestContext,
+        request: CreateGroupRequest,
+    ) -> Result<GroupId>;
+    async fn delete_group(&self, context: &RequestContext, group_id: GroupId) -> Result<()>;
 }
 
 #[async_trait]
 pub trait UserListerBackendHandler: ReadSchemaBackendHandler {
     async fn list_users(
         &self,
-        filters: Option<UserRequestFilter>,
-        get_groups: bool,
+        context: &RequestContext,
+        filters: ListUsersRequest,
     ) -> Result<Vec<UserAndGroups>>;
 }
 
 #[async_trait]
 pub trait UserBackendHandler: ReadSchemaBackendHandler {
-    async fn get_user_details(&self, user_id: &UserId) -> Result<User>;
-    async fn create_user(&self, request: CreateUserRequest) -> Result<()>;
-    async fn update_user(&self, request: UpdateUserRequest) -> Result<()>;
-    async fn delete_user(&self, user_id: &UserId) -> Result<()>;
-    async fn add_user_to_group(&self, user_id: &UserId, group_id: GroupId) -> Result<()>;
-    async fn remove_user_from_group(&self, user_id: &UserId, group_id: GroupId) -> Result<()>;
-    async fn get_user_groups(&self, user_id: &UserId) -> Result<HashSet<GroupDetails>>;
+    async fn get_user_details(&self, context: &RequestContext, user_id: UserId) -> Result<User>;
+    async fn create_user(&self, context: &RequestContext, request: CreateUserRequest)
+    -> Result<()>;
+    async fn update_user(&self, context: &RequestContext, request: UpdateUserRequest)
+    -> Result<()>;
+    async fn delete_user(&self, context: &RequestContext, user_id: UserId) -> Result<()>;
+    async fn add_user_to_group(
+        &self,
+        context: &RequestContext,
+        request: AddUserToGroupRequest,
+    ) -> Result<()>;
+    async fn remove_user_from_group(
+        &self,
+        context: &RequestContext,
+        request: RemoveUserFromGroupRequest,
+    ) -> Result<()>;
+    async fn get_user_groups(
+        &self,
+        context: &RequestContext,
+        user_id: UserId,
+    ) -> Result<HashSet<GroupDetails>>;
 }
 
 #[async_trait]
 pub trait ReadSchemaBackendHandler {
-    async fn get_schema(&self) -> Result<Schema>;
+    async fn get_schema(&self, context: &RequestContext) -> Result<Schema>;
 }
 
 #[async_trait]
 pub trait SchemaBackendHandler: ReadSchemaBackendHandler {
-    async fn add_user_attribute(&self, request: CreateAttributeRequest) -> Result<()>;
-    async fn add_group_attribute(&self, request: CreateAttributeRequest) -> Result<()>;
+    async fn add_user_attribute(
+        &self,
+        context: &RequestContext,
+        request: CreateAttributeRequest,
+    ) -> Result<()>;
+    async fn add_group_attribute(
+        &self,
+        context: &RequestContext,
+        request: CreateAttributeRequest,
+    ) -> Result<()>;
     // Note: It's up to the caller to make sure that the attribute is not hardcoded.
-    async fn delete_user_attribute(&self, name: &AttributeName) -> Result<()>;
-    async fn delete_group_attribute(&self, name: &AttributeName) -> Result<()>;
+    async fn delete_user_attribute(
+        &self,
+        context: &RequestContext,
+        name: AttributeName,
+    ) -> Result<()>;
+    async fn delete_group_attribute(
+        &self,
+        context: &RequestContext,
+        name: AttributeName,
+    ) -> Result<()>;
 
-    async fn add_user_object_class(&self, name: &LdapObjectClass) -> Result<()>;
-    async fn add_group_object_class(&self, name: &LdapObjectClass) -> Result<()>;
-    async fn delete_user_object_class(&self, name: &LdapObjectClass) -> Result<()>;
-    async fn delete_group_object_class(&self, name: &LdapObjectClass) -> Result<()>;
+    async fn add_user_object_class(
+        &self,
+        context: &RequestContext,
+        name: LdapObjectClass,
+    ) -> Result<()>;
+    async fn add_group_object_class(
+        &self,
+        context: &RequestContext,
+        name: LdapObjectClass,
+    ) -> Result<()>;
+    async fn delete_user_object_class(
+        &self,
+        context: &RequestContext,
+        name: LdapObjectClass,
+    ) -> Result<()>;
+    async fn delete_group_object_class(
+        &self,
+        context: &RequestContext,
+        name: LdapObjectClass,
+    ) -> Result<()>;
 }
 
 #[async_trait]

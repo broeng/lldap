@@ -4,11 +4,13 @@ use lldap_access_control::{AdminBackendHandler, ReadonlyBackendHandler};
 use lldap_domain::{
     deserialize::deserialize_attribute_value,
     public_schema::PublicSchema,
-    requests::CreateGroupRequest,
     schema::AttributeList,
     types::{Attribute as DomainAttribute, AttributeName, Email},
 };
-use lldap_domain_handlers::handler::{BackendHandler, ReadSchemaBackendHandler};
+use lldap_domain_handlers::{
+    handler::{BackendHandler, ReadSchemaBackendHandler},
+    requests::CreateGroupRequest,
+};
 use std::{collections::BTreeMap, sync::Arc};
 use tracing::{Instrument, Span};
 
@@ -107,7 +109,8 @@ pub async fn create_group_with_details<Handler: BackendHandler>(
     let handler = context
         .get_admin_handler()
         .ok_or_else(field_error_callback(&span, "Unauthorized group creation"))?;
-    let schema = handler.get_schema().await?;
+    let request_context = context.get_request_context();
+    let schema = handler.get_schema(&request_context).await?;
     let public_schema: PublicSchema = schema.into();
     let attributes = request
         .attributes
@@ -119,8 +122,11 @@ pub async fn create_group_with_details<Handler: BackendHandler>(
         display_name: request.display_name.into(),
         attributes,
     };
-    let group_id = handler.create_group(request).await?;
-    let group_details = handler.get_group_details(group_id).instrument(span).await?;
+    let group_id = handler.create_group(&request_context, request).await?;
+    let group_details = handler
+        .get_group_details(&request_context, group_id)
+        .instrument(span)
+        .await?;
     crate::query::Group::<Handler>::from_group_details(group_details, Arc::new(public_schema))
 }
 

@@ -1,12 +1,10 @@
 use crate::sql_backend_handler::SqlBackendHandler;
 use async_trait::async_trait;
 use lldap_access_control::UserReadableBackendHandler;
-use lldap_domain::{
-    requests::{CreateGroupRequest, UpdateGroupRequest},
-    types::{AttributeName, Group, GroupDetails, GroupId, Serialized, Uuid},
-};
-use lldap_domain_handlers::handler::{
-    GroupBackendHandler, GroupListerBackendHandler, GroupRequestFilter,
+use lldap_domain::types::{AttributeName, Group, GroupDetails, GroupId, Serialized, Uuid};
+use lldap_domain_handlers::{
+    handler::{GroupBackendHandler, GroupListerBackendHandler, GroupRequestFilter, RequestContext},
+    requests::{CreateGroupRequest, ListGroupsRequest, UpdateGroupRequest},
 };
 use lldap_domain_model::{
     error::{DomainError, Result},
@@ -89,9 +87,14 @@ fn get_group_filter_expr(filter: GroupRequestFilter) -> Cond {
 
 #[async_trait]
 impl GroupListerBackendHandler for SqlBackendHandler {
-    #[instrument(skip(self), level = "debug", ret, err)]
-    async fn list_groups(&self, filters: Option<GroupRequestFilter>) -> Result<Vec<Group>> {
+    #[instrument(skip(self, context), level = "debug", ret, err)]
+    async fn list_groups(
+        &self,
+        context: &RequestContext,
+        filters: ListGroupsRequest,
+    ) -> Result<Vec<Group>> {
         let filters = filters
+            .filter
             .map(|f| {
                 GroupColumn::GroupId
                     .in_subquery(
@@ -122,7 +125,7 @@ impl GroupListerBackendHandler for SqlBackendHandler {
             })
             .collect();
         // TODO: should be wrapped in a transaction
-        let schema = self.get_schema().await?;
+        let schema = self.get_schema(context).await?;
         let attributes = model::GroupAttributes::find()
             .filter(
                 model::GroupAttributesColumn::GroupId.in_subquery(
@@ -159,7 +162,11 @@ impl GroupListerBackendHandler for SqlBackendHandler {
 #[async_trait]
 impl GroupBackendHandler for SqlBackendHandler {
     #[instrument(skip(self), level = "debug", ret, err)]
-    async fn get_group_details(&self, group_id: GroupId) -> Result<GroupDetails> {
+    async fn get_group_details(
+        &self,
+        context: &RequestContext,
+        group_id: GroupId,
+    ) -> Result<GroupDetails> {
         let mut group_details = model::Group::find_by_id(group_id)
             .one(&self.sql_pool)
             .await?
@@ -170,7 +177,7 @@ impl GroupBackendHandler for SqlBackendHandler {
             .order_by_asc(model::GroupAttributesColumn::AttributeName)
             .all(&self.sql_pool)
             .await?;
-        let schema = self.get_schema().await?;
+        let schema = self.get_schema(context).await?;
         group_details.attributes = attributes
             .into_iter()
             .map(|a| {
@@ -184,8 +191,12 @@ impl GroupBackendHandler for SqlBackendHandler {
         Ok(group_details)
     }
 
-    #[instrument(skip(self), level = "debug", err, fields(group_id = ?request.group_id))]
-    async fn update_group(&self, request: UpdateGroupRequest) -> Result<()> {
+    #[instrument(skip(self, _context), level = "debug", err, fields(group_id = ?request.group_id))]
+    async fn update_group(
+        &self,
+        _context: &RequestContext,
+        request: UpdateGroupRequest,
+    ) -> Result<()> {
         Ok(self
             .sql_pool
             .transaction::<_, (), DomainError>(|transaction| {
@@ -196,8 +207,12 @@ impl GroupBackendHandler for SqlBackendHandler {
             .await?)
     }
 
-    #[instrument(skip(self), level = "debug", ret, err)]
-    async fn create_group(&self, request: CreateGroupRequest) -> Result<GroupId> {
+    #[instrument(skip(self, _context), level = "debug", ret, err)]
+    async fn create_group(
+        &self,
+        _context: &RequestContext,
+        request: CreateGroupRequest,
+    ) -> Result<GroupId> {
         let now = chrono::Utc::now().naive_utc();
         let uuid = Uuid::from_name_and_date(request.display_name.as_str(), &now);
         let lower_display_name = request.display_name.as_str().to_lowercase();
@@ -247,7 +262,7 @@ impl GroupBackendHandler for SqlBackendHandler {
     }
 
     #[instrument(skip(self), level = "debug", err)]
-    async fn delete_group(&self, group_id: GroupId) -> Result<()> {
+    async fn delete_group(&self, context: &RequestContext, group_id: GroupId) -> Result<()> {
         let res = model::Group::delete_by_id(group_id)
             .exec(&self.sql_pool)
             .await?;
@@ -340,19 +355,20 @@ impl SqlBackendHandler {
 mod tests {
     use super::*;
     use crate::sql_backend_handler::tests::*;
-    use lldap_domain::{
+    use lldap_domain::types::{Attribute, AttributeType, GroupName, UserId};
+    use lldap_domain_handlers::{
+        handler::{SchemaBackendHandler, SubStringFilter},
         requests::CreateAttributeRequest,
-        types::{Attribute, AttributeType, GroupName, UserId},
     };
-    use lldap_domain_handlers::handler::{SchemaBackendHandler, SubStringFilter};
     use pretty_assertions::assert_eq;
 
     async fn get_group_ids(
         handler: &SqlBackendHandler,
+        context: &RequestContext,
         filters: Option<GroupRequestFilter>,
     ) -> Vec<GroupId> {
         handler
-            .list_groups(filters)
+            .list_groups(context, ListGroupsRequest { filter: filters })
             .await
             .unwrap()
             .into_iter()
@@ -362,10 +378,11 @@ mod tests {
 
     async fn get_group_names(
         handler: &SqlBackendHandler,
+        context: &RequestContext,
         filters: Option<GroupRequestFilter>,
     ) -> Vec<GroupName> {
         handler
-            .list_groups(filters)
+            .list_groups(context, ListGroupsRequest { filter: filters })
             .await
             .unwrap()
             .into_iter()
@@ -377,7 +394,7 @@ mod tests {
     async fn test_list_groups_no_filter() {
         let fixture = TestFixture::new().await;
         assert_eq!(
-            get_group_names(&fixture.handler, None).await,
+            get_group_names(&fixture.handler, &RequestContext::empty(), None).await,
             vec![
                 "Best Group".into(),
                 "Empty Group".into(),
@@ -392,6 +409,7 @@ mod tests {
         assert_eq!(
             get_group_names(
                 &fixture.handler,
+                &RequestContext::empty(),
                 Some(GroupRequestFilter::Or(vec![
                     GroupRequestFilter::DisplayName("Empty Group".into()),
                     GroupRequestFilter::Member(UserId::new("bob")),
@@ -408,6 +426,7 @@ mod tests {
         assert_eq!(
             get_group_names(
                 &fixture.handler,
+                &RequestContext::empty(),
                 Some(GroupRequestFilter::DisplayName("eMpTy gRoup".into()),)
             )
             .await,
@@ -421,6 +440,7 @@ mod tests {
         assert_eq!(
             get_group_ids(
                 &fixture.handler,
+                &RequestContext::empty(),
                 Some(GroupRequestFilter::And(vec![
                     GroupRequestFilter::Not(Box::new(GroupRequestFilter::DisplayName(
                         "value".into()
@@ -439,6 +459,7 @@ mod tests {
         assert_eq!(
             get_group_ids(
                 &fixture.handler,
+                &RequestContext::empty(),
                 Some(GroupRequestFilter::DisplayNameSubString(SubStringFilter {
                     initial: Some("be".to_owned()),
                     any: vec!["sT".to_owned()],
@@ -454,33 +475,41 @@ mod tests {
     #[tokio::test]
     async fn test_list_groups_other_filter() {
         let fixture = TestFixture::new().await;
+        let context = RequestContext::empty();
         fixture
             .handler
-            .add_group_attribute(CreateAttributeRequest {
-                name: "gid".into(),
-                attribute_type: AttributeType::Integer,
-                is_list: false,
-                is_visible: true,
-                is_editable: true,
-            })
+            .add_group_attribute(
+                &context,
+                CreateAttributeRequest {
+                    name: "gid".into(),
+                    attribute_type: AttributeType::Integer,
+                    is_list: false,
+                    is_visible: true,
+                    is_editable: true,
+                },
+            )
             .await
             .unwrap();
         fixture
             .handler
-            .update_group(UpdateGroupRequest {
-                group_id: fixture.groups[0],
-                display_name: None,
-                delete_attributes: Vec::new(),
-                insert_attributes: vec![Attribute {
-                    name: "gid".into(),
-                    value: 512.into(),
-                }],
-            })
+            .update_group(
+                &context,
+                UpdateGroupRequest {
+                    group_id: fixture.groups[0],
+                    display_name: None,
+                    delete_attributes: Vec::new(),
+                    insert_attributes: vec![Attribute {
+                        name: "gid".into(),
+                        value: 512.into(),
+                    }],
+                },
+            )
             .await
             .unwrap();
         assert_eq!(
             get_group_ids(
                 &fixture.handler,
+                &context,
                 Some(GroupRequestFilter::AttributeEquality(
                     AttributeName::from("gid"),
                     512.into(),
@@ -494,9 +523,10 @@ mod tests {
     #[tokio::test]
     async fn test_get_group_details() {
         let fixture = TestFixture::new().await;
+        let context = RequestContext::empty();
         let details = fixture
             .handler
-            .get_group_details(fixture.groups[0])
+            .get_group_details(&context, fixture.groups[0])
             .await
             .unwrap();
         assert_eq!(details.group_id, fixture.groups[0]);
@@ -504,6 +534,7 @@ mod tests {
         assert_eq!(
             get_group_ids(
                 &fixture.handler,
+                &context,
                 Some(GroupRequestFilter::Uuid(details.uuid))
             )
             .await,
@@ -514,19 +545,23 @@ mod tests {
     #[tokio::test]
     async fn test_update_group() {
         let fixture = TestFixture::new().await;
+        let context = RequestContext::empty();
         fixture
             .handler
-            .update_group(UpdateGroupRequest {
-                group_id: fixture.groups[0],
-                display_name: Some("Awesomest Group".into()),
-                delete_attributes: Vec::new(),
-                insert_attributes: Vec::new(),
-            })
+            .update_group(
+                &context,
+                UpdateGroupRequest {
+                    group_id: fixture.groups[0],
+                    display_name: Some("Awesomest Group".into()),
+                    delete_attributes: Vec::new(),
+                    insert_attributes: Vec::new(),
+                },
+            )
             .await
             .unwrap();
         let details = fixture
             .handler
-            .get_group_details(fixture.groups[0])
+            .get_group_details(&context, fixture.groups[0])
             .await
             .unwrap();
         assert_eq!(details.display_name, "Awesomest Group".into());
@@ -535,17 +570,18 @@ mod tests {
     #[tokio::test]
     async fn test_delete_group() {
         let fixture = TestFixture::new().await;
+        let context = RequestContext::empty();
         assert_eq!(
-            get_group_ids(&fixture.handler, None).await,
+            get_group_ids(&fixture.handler, &context, None).await,
             vec![fixture.groups[0], fixture.groups[2], fixture.groups[1]]
         );
         fixture
             .handler
-            .delete_group(fixture.groups[0])
+            .delete_group(&context, fixture.groups[0])
             .await
             .unwrap();
         assert_eq!(
-            get_group_ids(&fixture.handler, None).await,
+            get_group_ids(&fixture.handler, &context, None).await,
             vec![fixture.groups[2], fixture.groups[1]]
         );
     }
@@ -553,35 +589,42 @@ mod tests {
     #[tokio::test]
     async fn test_create_group() {
         let fixture = TestFixture::new().await;
+        let context = RequestContext::empty();
         assert_eq!(
-            get_group_ids(&fixture.handler, None).await,
+            get_group_ids(&fixture.handler, &context, None).await,
             vec![fixture.groups[0], fixture.groups[2], fixture.groups[1]]
         );
         fixture
             .handler
-            .add_group_attribute(CreateAttributeRequest {
-                name: "new_attribute".into(),
-                attribute_type: AttributeType::String,
-                is_list: false,
-                is_visible: true,
-                is_editable: true,
-            })
+            .add_group_attribute(
+                &context,
+                CreateAttributeRequest {
+                    name: "new_attribute".into(),
+                    attribute_type: AttributeType::String,
+                    is_list: false,
+                    is_visible: true,
+                    is_editable: true,
+                },
+            )
             .await
             .unwrap();
         let new_group_id = fixture
             .handler
-            .create_group(CreateGroupRequest {
-                display_name: "New Group".into(),
-                attributes: vec![Attribute {
-                    name: "new_attribute".into(),
-                    value: "value".to_string().into(),
-                }],
-            })
+            .create_group(
+                &context,
+                CreateGroupRequest {
+                    display_name: "New Group".into(),
+                    attributes: vec![Attribute {
+                        name: "new_attribute".into(),
+                        value: "value".to_string().into(),
+                    }],
+                },
+            )
             .await
             .unwrap();
         let group_details = fixture
             .handler
-            .get_group_details(new_group_id)
+            .get_group_details(&context, new_group_id)
             .await
             .unwrap();
         assert_eq!(group_details.display_name, "New Group".into());
@@ -597,15 +640,19 @@ mod tests {
     #[tokio::test]
     async fn test_set_group_attributes() {
         let fixture = TestFixture::new().await;
+        let context = RequestContext::empty();
         fixture
             .handler
-            .add_group_attribute(CreateAttributeRequest {
-                name: "new_attribute".into(),
-                attribute_type: AttributeType::Integer,
-                is_list: false,
-                is_visible: true,
-                is_editable: true,
-            })
+            .add_group_attribute(
+                &context,
+                CreateAttributeRequest {
+                    name: "new_attribute".into(),
+                    attribute_type: AttributeType::Integer,
+                    is_list: false,
+                    is_visible: true,
+                    is_editable: true,
+                },
+            )
             .await
             .unwrap();
         let group_id = fixture.groups[0];
@@ -615,47 +662,68 @@ mod tests {
         }];
         fixture
             .handler
-            .update_group(UpdateGroupRequest {
-                group_id,
-                display_name: None,
-                delete_attributes: Vec::new(),
-                insert_attributes: attributes.clone(),
-            })
+            .update_group(
+                &context,
+                UpdateGroupRequest {
+                    group_id,
+                    display_name: None,
+                    delete_attributes: Vec::new(),
+                    insert_attributes: attributes.clone(),
+                },
+            )
             .await
             .unwrap();
-        let details = fixture.handler.get_group_details(group_id).await.unwrap();
+        let details = fixture
+            .handler
+            .get_group_details(&context, group_id)
+            .await
+            .unwrap();
         assert_eq!(details.attributes, attributes);
         fixture
             .handler
-            .update_group(UpdateGroupRequest {
-                group_id,
-                display_name: None,
-                delete_attributes: vec!["new_attribute".into()],
-                insert_attributes: Vec::new(),
-            })
+            .update_group(
+                &context,
+                UpdateGroupRequest {
+                    group_id,
+                    display_name: None,
+                    delete_attributes: vec!["new_attribute".into()],
+                    insert_attributes: Vec::new(),
+                },
+            )
             .await
             .unwrap();
-        let details = fixture.handler.get_group_details(group_id).await.unwrap();
+        let details = fixture
+            .handler
+            .get_group_details(&context, group_id)
+            .await
+            .unwrap();
         assert_eq!(details.attributes, Vec::new());
     }
 
     #[tokio::test]
     async fn test_create_group_duplicate_name() {
         let fixture = TestFixture::new().await;
+        let context = RequestContext::empty();
         fixture
             .handler
-            .create_group(CreateGroupRequest {
-                display_name: "New Group".into(),
-                ..Default::default()
-            })
+            .create_group(
+                &context,
+                CreateGroupRequest {
+                    display_name: "New Group".into(),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
         fixture
             .handler
-            .create_group(CreateGroupRequest {
-                display_name: "neW group".into(),
-                ..Default::default()
-            })
+            .create_group(
+                &context,
+                CreateGroupRequest {
+                    display_name: "neW group".into(),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap_err();
     }

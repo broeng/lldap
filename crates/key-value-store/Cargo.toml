@@ -1,0 +1,26 @@
+[package]
+name = "lldap_key_value_store"
+version = "0.1.0"
+authors = ["Simon Broeng Jensen <sbj@cwconsult.dk>"]
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+seaorm = ["dep:sea-orm"]
+
+[dependencies]
+async-trait = "0.1"
+thiserror = "1"
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.tokio]
+version = "*"
+features = ["macros", "rt"]
+
+[dependencies.sea-orm]
+workspace = true
+optional = true

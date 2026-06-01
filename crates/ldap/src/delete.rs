@@ -5,7 +5,10 @@ use crate::core::{
 use ldap3_proto::proto::{LdapOp, LdapResult as LdapResultOp, LdapResultCode};
 use lldap_access_control::AdminBackendHandler;
 use lldap_domain::types::{GroupName, UserId};
-use lldap_domain_handlers::handler::GroupRequestFilter;
+use lldap_domain_handlers::{
+    handler::{GroupRequestFilter, RequestContext},
+    requests::ListGroupsRequest,
+};
 use lldap_domain_model::error::DomainError;
 use tracing::instrument;
 
@@ -23,11 +26,14 @@ pub(crate) async fn delete_user_or_group(
     backend_handler: &impl AdminBackendHandler,
     ldap_info: &LdapInfo,
     request: String,
+    context: &RequestContext,
 ) -> LdapResult<Vec<LdapOp>> {
     let base_dn_str = &ldap_info.base_dn_str;
     match get_user_or_group_id_from_distinguished_name(&request, &ldap_info.base_dn) {
-        UserOrGroupName::User(user_id) => delete_user(backend_handler, user_id).await,
-        UserOrGroupName::Group(group_name) => delete_group(backend_handler, group_name).await,
+        UserOrGroupName::User(user_id) => delete_user(backend_handler, user_id, context).await,
+        UserOrGroupName::Group(group_name) => {
+            delete_group(backend_handler, group_name, context).await
+        }
         err => Err(err.into_ldap_error(
             &request,
             format!(r#""uid=id,ou=people,{base_dn_str}" or "uid=id,ou=groups,{base_dn_str}""#),
@@ -39,9 +45,10 @@ pub(crate) async fn delete_user_or_group(
 async fn delete_user(
     backend_handler: &impl AdminBackendHandler,
     user_id: UserId,
+    context: &RequestContext,
 ) -> LdapResult<Vec<LdapOp>> {
     backend_handler
-        .get_user_details(&user_id)
+        .get_user_details(context, user_id.clone())
         .await
         .map_err(|err| match err {
             DomainError::EntityNotFound(_) => LdapError {
@@ -54,7 +61,7 @@ async fn delete_user(
             },
         })?;
     backend_handler
-        .delete_user(&user_id)
+        .delete_user(context, user_id)
         .await
         .map_err(|e| LdapError {
             code: LdapResultCode::OperationsError,
@@ -70,9 +77,15 @@ async fn delete_user(
 async fn delete_group(
     backend_handler: &impl AdminBackendHandler,
     group_name: GroupName,
+    context: &RequestContext,
 ) -> LdapResult<Vec<LdapOp>> {
     let groups = backend_handler
-        .list_groups(Some(GroupRequestFilter::DisplayName(group_name.clone())))
+        .list_groups(
+            context,
+            ListGroupsRequest {
+                filter: Some(GroupRequestFilter::DisplayName(group_name.clone())),
+            },
+        )
         .await
         .map_err(|e| LdapError {
             code: LdapResultCode::OperationsError,
@@ -87,7 +100,7 @@ async fn delete_group(
             message: "Could not find group".to_string(),
         })?;
     backend_handler
-        .delete_group(group_id)
+        .delete_group(context, group_id)
         .await
         .map_err(|e| LdapError {
             code: LdapResultCode::OperationsError,
@@ -102,7 +115,7 @@ async fn delete_group(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::handler::tests::setup_bound_admin_handler;
+    use crate::{events::NoopLdapEventHandler, handler::tests::setup_bound_admin_handler};
     use chrono::TimeZone;
     use lldap_domain::{
         types::{Group, GroupId, User},
@@ -115,20 +128,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_user() {
+        let context = RequestContext::admin("test");
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_get_user_details()
-            .with(eq(UserId::new("bob")))
-            .return_once(|_| {
+            .with(eq(context.clone()), eq(UserId::new("bob")))
+            .return_once(|_, _| {
                 Ok(User {
                     user_id: UserId::new("bob"),
                     ..Default::default()
                 })
             });
         mock.expect_delete_user()
-            .with(eq(UserId::new("bob")))
+            .with(eq(context.clone()), eq(UserId::new("bob")))
             .times(1)
-            .return_once(|_| Ok(()));
-        let mut ldap_handler = setup_bound_admin_handler(mock).await;
+            .return_once(|_, _| Ok(()));
+        let mut ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = LdapOp::DelRequest("uid=bob,ou=people,dc=example,dc=com".to_owned());
         assert_eq!(
             ldap_handler.handle_ldap_message(request).await,
@@ -141,12 +156,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_group() {
+        let context = RequestContext::admin("test");
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_list_groups()
-            .with(eq(Some(GroupRequestFilter::DisplayName(GroupName::from(
-                "bob",
-            )))))
-            .return_once(|_| {
+            .with(
+                eq(context.clone()),
+                eq(ListGroupsRequest {
+                    filter: Some(GroupRequestFilter::DisplayName(GroupName::from("bob"))),
+                }),
+            )
+            .returning(|_, _| {
                 Ok(vec![Group {
                     id: GroupId(34),
                     display_name: GroupName::from("bob"),
@@ -158,10 +178,10 @@ mod tests {
                 }])
             });
         mock.expect_delete_group()
-            .with(eq(GroupId(34)))
+            .with(eq(context.clone()), eq(GroupId(34)))
             .times(1)
-            .return_once(|_| Ok(()));
-        let mut ldap_handler = setup_bound_admin_handler(mock).await;
+            .return_once(|_, _| Ok(()));
+        let mut ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = LdapOp::DelRequest("uid=bob,ou=groups,dc=example,dc=com".to_owned());
         assert_eq!(
             ldap_handler.handle_ldap_message(request).await,
@@ -174,11 +194,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_user_not_found() {
+        let context = RequestContext::admin("test");
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_get_user_details()
-            .with(eq(UserId::new("bob")))
-            .return_once(|_| Err(DomainError::EntityNotFound("No such user".to_string())));
-        let mut ldap_handler = setup_bound_admin_handler(mock).await;
+            .with(eq(context.clone()), eq(UserId::new("bob")))
+            .return_once(|_, _| Err(DomainError::EntityNotFound("No such user".to_string())));
+        let mut ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = LdapOp::DelRequest("uid=bob,ou=people,dc=example,dc=com".to_owned());
         assert_eq!(
             ldap_handler.handle_ldap_message(request).await,
@@ -191,11 +213,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_user_lookup_error() {
+        let context = RequestContext::admin("test");
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_get_user_details()
-            .with(eq(UserId::new("bob")))
-            .return_once(|_| Err(DomainError::InternalError("WTF?".to_string())));
-        let mut ldap_handler = setup_bound_admin_handler(mock).await;
+            .with(eq(context.clone()), eq(UserId::new("bob")))
+            .return_once(|_, _| Err(DomainError::InternalError("WTF?".to_string())));
+        let mut ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = LdapOp::DelRequest("uid=bob,ou=people,dc=example,dc=com".to_owned());
         assert_eq!(
             ldap_handler.handle_ldap_message(request).await,
@@ -208,20 +232,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_user_deletion_error() {
+        let context = RequestContext::admin("test");
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_get_user_details()
-            .with(eq(UserId::new("bob")))
-            .return_once(|_| {
+            .with(eq(context.clone()), eq(UserId::new("bob")))
+            .return_once(|_, _| {
                 Ok(User {
                     user_id: UserId::new("bob"),
                     ..Default::default()
                 })
             });
         mock.expect_delete_user()
-            .with(eq(UserId::new("bob")))
+            .with(eq(context.clone()), eq(UserId::new("bob")))
             .times(1)
-            .return_once(|_| Err(DomainError::InternalError("WTF?".to_string())));
-        let mut ldap_handler = setup_bound_admin_handler(mock).await;
+            .return_once(|_, _| Err(DomainError::InternalError("WTF?".to_string())));
+        let mut ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = LdapOp::DelRequest("uid=bob,ou=people,dc=example,dc=com".to_owned());
         assert_eq!(
             ldap_handler.handle_ldap_message(request).await,
@@ -234,13 +260,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_group_not_found() {
+        let context = RequestContext::admin("test");
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_list_groups()
-            .with(eq(Some(GroupRequestFilter::DisplayName(GroupName::from(
-                "bob",
-            )))))
-            .return_once(|_| Ok(vec![]));
-        let mut ldap_handler = setup_bound_admin_handler(mock).await;
+            .with(
+                eq(context.clone()),
+                eq(ListGroupsRequest {
+                    filter: Some(GroupRequestFilter::DisplayName(GroupName::from("bob"))),
+                }),
+            )
+            .return_once(|_, _| Ok(vec![]));
+        let mut ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = LdapOp::DelRequest("uid=bob,ou=groups,dc=example,dc=com".to_owned());
         assert_eq!(
             ldap_handler.handle_ldap_message(request).await,
@@ -253,13 +284,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_group_lookup_error() {
+        let context = RequestContext::admin("test");
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_list_groups()
-            .with(eq(Some(GroupRequestFilter::DisplayName(GroupName::from(
-                "bob",
-            )))))
-            .return_once(|_| Err(DomainError::InternalError("WTF?".to_string())));
-        let mut ldap_handler = setup_bound_admin_handler(mock).await;
+            .with(
+                eq(context.clone()),
+                eq(ListGroupsRequest {
+                    filter: Some(GroupRequestFilter::DisplayName(GroupName::from("bob"))),
+                }),
+            )
+            .return_once(|_, _| Err(DomainError::InternalError("WTF?".to_string())));
+        let mut ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = LdapOp::DelRequest("uid=bob,ou=groups,dc=example,dc=com".to_owned());
         assert_eq!(
             ldap_handler.handle_ldap_message(request).await,
@@ -272,12 +308,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_group_deletion_error() {
+        let context = RequestContext::admin("test");
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
         mock.expect_list_groups()
-            .with(eq(Some(GroupRequestFilter::DisplayName(GroupName::from(
-                "bob",
-            )))))
-            .return_once(|_| {
+            .with(
+                eq(context.clone()),
+                eq(ListGroupsRequest {
+                    filter: Some(GroupRequestFilter::DisplayName(GroupName::from("bob"))),
+                }),
+            )
+            .return_once(|_, _| {
                 Ok(vec![Group {
                     id: GroupId(34),
                     display_name: GroupName::from("bob"),
@@ -289,10 +330,10 @@ mod tests {
                 }])
             });
         mock.expect_delete_group()
-            .with(eq(GroupId(34)))
+            .with(eq(context.clone()), eq(GroupId(34)))
             .times(1)
-            .return_once(|_| Err(DomainError::InternalError("WTF?".to_string())));
-        let mut ldap_handler = setup_bound_admin_handler(mock).await;
+            .return_once(|_, _| Err(DomainError::InternalError("WTF?".to_string())));
+        let mut ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = LdapOp::DelRequest("uid=bob,ou=groups,dc=example,dc=com".to_owned());
         assert_eq!(
             ldap_handler.handle_ldap_message(request).await,
