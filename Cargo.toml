@@ -1,5 +1,13 @@
 [workspace]
 members = [
+    "crates/auth",
+    "crates/domain",
+    "crates/domain-model",
+    "crates/domain-handlers",
+    "crates/key-value-store",
+    "crates/validation",
+    "crates/plugin-engine",
+    "crates/plugin-kv-store",
     "server",
     "app",
     "migration-tool",
@@ -74,6 +82,7 @@ features = ["sync", "tls-rustls-ring"]
 
 [workspace.dependencies.ldap3_proto]
 version = "0.7"
+features = ["serde"]
 
 [workspace.dependencies.jwt]
 version = "0.16"

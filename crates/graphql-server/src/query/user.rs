@@ -123,7 +123,7 @@ impl<Handler: BackendHandler> User<Handler> {
             .get_readable_handler(&self.user.user_id)
             .expect("We shouldn't be able to get there without readable permission");
         let domain_groups = handler
-            .get_user_groups(&self.user.user_id)
+            .get_user_groups(&context.get_request_context(), self.user.user_id.clone())
             .instrument(span)
             .await?;
         let mut groups = domain_groups

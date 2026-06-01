@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Attribute, AttributeName, AttributeType, Email, GroupId, GroupName, UserId};
+use lldap_domain::types::{
+    Attribute, AttributeName, AttributeType, Email, GroupId, GroupName, UserId,
+};
+
+use crate::handler::{GroupRequestFilter, UserRequestFilter};
 
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone, Default)]
 pub struct CreateUserRequest {
@@ -42,4 +46,41 @@ pub struct CreateAttributeRequest {
     pub is_list: bool,
     pub is_visible: bool,
     pub is_editable: bool,
+}
+
+#[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
+pub struct AddUserToGroupRequest {
+    pub user_id: UserId,
+    pub group_id: GroupId,
+}
+
+#[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
+pub struct RemoveUserFromGroupRequest {
+    pub user_id: UserId,
+    pub group_id: GroupId,
+}
+
+#[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
+pub struct ListUsersRequest {
+    pub filter: Option<UserRequestFilter>,
+    #[serde(rename = "need_groups")]
+    pub need_groups: bool,
+}
+impl ListUsersRequest {
+    pub fn empty() -> Self {
+        Self {
+            filter: None,
+            need_groups: true,
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
+pub struct ListGroupsRequest {
+    pub filter: Option<GroupRequestFilter>,
+}
+impl ListGroupsRequest {
+    pub fn empty() -> Self {
+        Self { filter: None }
+    }
 }

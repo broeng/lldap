@@ -15,7 +15,10 @@ use juniper::{FieldResult, graphql_object};
 use lldap_access_control::{ReadonlyBackendHandler, UserReadableBackendHandler};
 use lldap_domain::public_schema::PublicSchema;
 use lldap_domain::types::{GroupId, UserId};
-use lldap_domain_handlers::handler::{BackendHandler, ReadSchemaBackendHandler};
+use lldap_domain_handlers::{
+    handler::{BackendHandler, ReadSchemaBackendHandler},
+    requests::{ListGroupsRequest, ListUsersRequest},
+};
 use std::sync::Arc;
 use tracing::{Instrument, Span, debug, debug_span};
 
@@ -66,7 +69,10 @@ impl<Handler: BackendHandler> Query<Handler> {
                 "Unauthorized access to user data",
             ))?;
         let schema: Arc<PublicSchema> = Arc::new(self.get_schema(context, span.clone()).await?);
-        let user = handler.get_user_details(&user_id).instrument(span).await?;
+        let user = handler
+            .get_user_details(&context.get_request_context(), user_id)
+            .instrument(span)
+            .await?;
         User::<Handler>::from_user(user, schema)
     }
 
@@ -88,10 +94,13 @@ impl<Handler: BackendHandler> Query<Handler> {
         let schema: Arc<PublicSchema> = Arc::new(self.get_schema(context, span.clone()).await?);
         let users = handler
             .list_users(
-                filters
-                    .map(|f| f.try_into_domain_filter(&schema))
-                    .transpose()?,
-                false,
+                &context.get_request_context(),
+                ListUsersRequest {
+                    filter: filters
+                        .map(|f| f.try_into_domain_filter(&schema))
+                        .transpose()?,
+                    need_groups: false,
+                },
             )
             .instrument(span)
             .await?;
@@ -110,7 +119,13 @@ impl<Handler: BackendHandler> Query<Handler> {
                 "Unauthorized access to group list",
             ))?;
         let schema: Arc<PublicSchema> = Arc::new(self.get_schema(context, span.clone()).await?);
-        let domain_groups = handler.list_groups(None).instrument(span).await?;
+        let domain_groups = handler
+            .list_groups(
+                &context.get_request_context(),
+                ListGroupsRequest { filter: None },
+            )
+            .instrument(span)
+            .await?;
         domain_groups
             .into_iter()
             .map(|g| Group::<Handler>::from_group(g, schema.clone()))
@@ -134,7 +149,7 @@ impl<Handler: BackendHandler> Query<Handler> {
             ))?;
         let schema: Arc<PublicSchema> = Arc::new(self.get_schema(context, span.clone()).await?);
         let group_details = handler
-            .get_group_details(GroupId(group_id))
+            .get_group_details(&context.get_request_context(), GroupId(group_id))
             .instrument(span)
             .await?;
         Group::<Handler>::from_group_details(group_details, schema.clone())
@@ -156,7 +171,7 @@ impl<Handler: BackendHandler> Query<Handler> {
             .handler
             .get_user_restricted_lister_handler(&context.validation_result);
         Ok(handler
-            .get_schema()
+            .get_schema(&context.get_request_context())
             .instrument(span)
             .await
             .map(Into::<PublicSchema>::into)?)
@@ -178,6 +193,7 @@ mod tests {
         schema::{AttributeList, Schema},
         types::{AttributeName, AttributeType, LdapObjectClass},
     };
+    use lldap_domain_handlers::handler::{RequestContext, UserRequestFilter};
     use lldap_domain_model::model::UserColumn;
     use lldap_test_utils::{MockTestBackendHandler, setup_default_schema};
     use mockall::predicate::eq;
@@ -223,7 +239,9 @@ mod tests {
         }"#;
 
         let mut mock = MockTestBackendHandler::new();
-        mock.expect_get_schema().returning(|| {
+        let credentials = ValidationResults::admin();
+        let context = RequestContext::new(Some(credentials.clone()));
+        mock.expect_get_schema().returning(|_| {
             Ok(Schema {
                 user_attributes: AttributeList {
                     attributes: vec![
@@ -266,8 +284,8 @@ mod tests {
             })
         });
         mock.expect_get_user_details()
-            .with(eq(UserId::new("bob")))
-            .return_once(|_| {
+            .with(eq(context.clone()), eq(UserId::new("bob")))
+            .return_once(|_, _| {
                 Ok(DomainUser {
                     user_id: UserId::new("bob"),
                     email: "bob@bobbers.on".into(),
@@ -318,16 +336,10 @@ mod tests {
             modified_date: chrono::Utc.timestamp_nanos(12).naive_utc(),
         });
         mock.expect_get_user_groups()
-            .with(eq(UserId::new("bob")))
-            .return_once(|_| Ok(groups));
+            .with(eq(context.clone()), eq(UserId::new("bob")))
+            .return_once(|_, _| Ok(groups));
 
-        let context = Context::<MockTestBackendHandler>::new_for_tests(
-            mock,
-            ValidationResults {
-                user: UserId::new("admin"),
-                permission: Permission::Admin,
-            },
-        );
+        let context = Context::<MockTestBackendHandler>::new_for_tests(mock, credentials);
 
         let schema = schema(Query::<MockTestBackendHandler>::new());
         let result = execute(QUERY, None, &schema, &Variables::new(), &context).await;
@@ -358,25 +370,26 @@ mod tests {
         }"#;
 
         let mut mock = MockTestBackendHandler::new();
-        setup_default_schema(&mut mock);
+        let credentials = ValidationResults::admin();
+        let context = RequestContext::new(Some(credentials.clone()));
+        setup_default_schema(&mut mock, &context);
         mock.expect_list_users()
             .with(
-                eq(Some(lldap_domain_handlers::handler::UserRequestFilter::Or(
-                    vec![
-                        lldap_domain_handlers::handler::UserRequestFilter::UserId(UserId::new(
-                            "bob",
-                        )),
-                        lldap_domain_handlers::handler::UserRequestFilter::Equality(
+                eq(context.clone()),
+                eq(ListUsersRequest {
+                    filter: Some(UserRequestFilter::Or(vec![
+                        UserRequestFilter::UserId(UserId::new("bob")),
+                        UserRequestFilter::Equality(
                             UserColumn::Email,
                             "robert@bobbers.on".to_owned(),
                         ),
-                        lldap_domain_handlers::handler::UserRequestFilter::AttributeEquality(
+                        UserRequestFilter::AttributeEquality(
                             AttributeName::from("first_name"),
                             "robert".to_string().into(),
                         ),
-                    ],
-                ))),
-                eq(false),
+                    ])),
+                    need_groups: false,
+                }),
             )
             .return_once(|_, _| {
                 Ok(vec![
@@ -421,13 +434,7 @@ mod tests {
                 ])
             });
 
-        let context = Context::<MockTestBackendHandler>::new_for_tests(
-            mock,
-            ValidationResults {
-                user: UserId::new("admin"),
-                permission: Permission::Admin,
-            },
-        );
+        let context = Context::<MockTestBackendHandler>::new_for_tests(mock, credentials);
 
         let schema = schema(Query::<MockTestBackendHandler>::new());
         assert_eq!(
@@ -481,16 +488,12 @@ mod tests {
         }"#;
 
         let mut mock = MockTestBackendHandler::new();
+        let credentials = ValidationResults::admin();
+        let context = RequestContext::new(Some(credentials.clone()));
 
-        setup_default_schema(&mut mock);
+        setup_default_schema(&mut mock, &context);
 
-        let context = Context::<MockTestBackendHandler>::new_for_tests(
-            mock,
-            ValidationResults {
-                user: UserId::new("admin"),
-                permission: Permission::Admin,
-            },
-        );
+        let context = Context::<MockTestBackendHandler>::new_for_tests(mock, credentials);
 
         let schema = schema(Query::<MockTestBackendHandler>::new());
         let result = execute(QUERY, None, &schema, &Variables::new(), &context).await;
@@ -512,7 +515,7 @@ mod tests {
 
         let mut mock = MockTestBackendHandler::new();
 
-        mock.expect_get_schema().times(1).return_once(|| {
+        mock.expect_get_schema().times(1).return_once(|_| {
             Ok(Schema {
                 user_attributes: AttributeList {
                     attributes: vec![DomainAttributeSchema {

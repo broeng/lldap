@@ -1,47 +1,64 @@
 use async_trait::async_trait;
 use lldap_auth::access_control::{Permission, ValidationResults};
-use lldap_domain::{
-    public_schema::PublicSchema,
+use lldap_domain_handlers::{
+    handler::{
+        BackendHandler, GroupBackendHandler, GroupListerBackendHandler, GroupRequestFilter,
+        ReadSchemaBackendHandler, RequestContext, SchemaBackendHandler, UserBackendHandler,
+        UserListerBackendHandler, UserRequestFilter,
+    },
     requests::{
-        CreateAttributeRequest, CreateGroupRequest, CreateUserRequest, UpdateGroupRequest,
+        AddUserToGroupRequest, CreateAttributeRequest, CreateGroupRequest, CreateUserRequest,
+        ListGroupsRequest, ListUsersRequest, RemoveUserFromGroupRequest, UpdateGroupRequest,
         UpdateUserRequest,
     },
+};
+use tracing::info;
+
+use lldap_domain::{
+    public_schema::PublicSchema,
     schema::{AttributeSchema, Schema},
     types::{
         AttributeName, Group, GroupDetails, GroupId, GroupName, LdapObjectClass, User,
         UserAndGroups, UserId,
     },
 };
-use lldap_domain_handlers::handler::{
-    BackendHandler, GroupBackendHandler, GroupListerBackendHandler, GroupRequestFilter,
-    ReadSchemaBackendHandler, SchemaBackendHandler, UserBackendHandler, UserListerBackendHandler,
-    UserRequestFilter,
-};
 use lldap_domain_model::error::Result;
 use std::collections::HashSet;
-use tracing::info;
 
 #[async_trait]
 pub trait UserReadableBackendHandler: ReadSchemaBackendHandler {
-    async fn get_user_details(&self, user_id: &UserId) -> Result<User>;
-    async fn get_user_groups(&self, user_id: &UserId) -> Result<HashSet<GroupDetails>>;
-    async fn get_schema(&self) -> Result<PublicSchema>;
+    async fn get_user_details(&self, context: &RequestContext, user_id: UserId) -> Result<User>;
+    async fn get_user_groups(
+        &self,
+        context: &RequestContext,
+        user_id: UserId,
+    ) -> Result<HashSet<GroupDetails>>;
+    async fn get_schema(&self, context: &RequestContext) -> Result<PublicSchema>;
 }
 
 #[async_trait]
 pub trait ReadonlyBackendHandler: UserReadableBackendHandler {
     async fn list_users(
         &self,
-        filters: Option<UserRequestFilter>,
-        get_groups: bool,
+        context: &RequestContext,
+        filters: ListUsersRequest,
     ) -> Result<Vec<UserAndGroups>>;
-    async fn list_groups(&self, filters: Option<GroupRequestFilter>) -> Result<Vec<Group>>;
-    async fn get_group_details(&self, group_id: GroupId) -> Result<GroupDetails>;
+    async fn list_groups(
+        &self,
+        context: &RequestContext,
+        filters: ListGroupsRequest,
+    ) -> Result<Vec<Group>>;
+    async fn get_group_details(
+        &self,
+        context: &RequestContext,
+        group_id: GroupId,
+    ) -> Result<GroupDetails>;
 }
 
 #[async_trait]
 pub trait UserWriteableBackendHandler: UserReadableBackendHandler {
-    async fn update_user(&self, request: UpdateUserRequest) -> Result<()>;
+    async fn update_user(&self, context: &RequestContext, request: UpdateUserRequest)
+    -> Result<()>;
 }
 
 #[async_trait]
@@ -51,34 +68,87 @@ pub trait AdminBackendHandler:
     + UserWriteableBackendHandler
     + SchemaBackendHandler
 {
-    async fn create_user(&self, request: CreateUserRequest) -> Result<()>;
-    async fn delete_user(&self, user_id: &UserId) -> Result<()>;
-    async fn add_user_to_group(&self, user_id: &UserId, group_id: GroupId) -> Result<()>;
-    async fn remove_user_from_group(&self, user_id: &UserId, group_id: GroupId) -> Result<()>;
-    async fn update_group(&self, request: UpdateGroupRequest) -> Result<()>;
-    async fn create_group(&self, request: CreateGroupRequest) -> Result<GroupId>;
-    async fn delete_group(&self, group_id: GroupId) -> Result<()>;
-    async fn add_user_attribute(&self, request: CreateAttributeRequest) -> Result<()>;
-    async fn add_group_attribute(&self, request: CreateAttributeRequest) -> Result<()>;
-    async fn delete_user_attribute(&self, name: &AttributeName) -> Result<()>;
-    async fn delete_group_attribute(&self, name: &AttributeName) -> Result<()>;
-    async fn add_user_object_class(&self, name: &LdapObjectClass) -> Result<()>;
-    async fn add_group_object_class(&self, name: &LdapObjectClass) -> Result<()>;
-    async fn delete_user_object_class(&self, name: &LdapObjectClass) -> Result<()>;
-    async fn delete_group_object_class(&self, name: &LdapObjectClass) -> Result<()>;
+    async fn create_user(&self, context: &RequestContext, request: CreateUserRequest)
+    -> Result<()>;
+    async fn delete_user(&self, context: &RequestContext, user_id: UserId) -> Result<()>;
+    async fn add_user_to_group(
+        &self,
+        context: &RequestContext,
+        request: AddUserToGroupRequest,
+    ) -> Result<()>;
+    async fn remove_user_from_group(
+        &self,
+        context: &RequestContext,
+        request: RemoveUserFromGroupRequest,
+    ) -> Result<()>;
+    async fn update_group(
+        &self,
+        context: &RequestContext,
+        request: UpdateGroupRequest,
+    ) -> Result<()>;
+    async fn create_group(
+        &self,
+        context: &RequestContext,
+        request: CreateGroupRequest,
+    ) -> Result<GroupId>;
+    async fn delete_group(&self, context: &RequestContext, group_id: GroupId) -> Result<()>;
+    async fn add_user_attribute(
+        &self,
+        context: &RequestContext,
+        request: CreateAttributeRequest,
+    ) -> Result<()>;
+    async fn add_group_attribute(
+        &self,
+        context: &RequestContext,
+        request: CreateAttributeRequest,
+    ) -> Result<()>;
+    async fn delete_user_attribute(
+        &self,
+        context: &RequestContext,
+        name: AttributeName,
+    ) -> Result<()>;
+    async fn delete_group_attribute(
+        &self,
+        context: &RequestContext,
+        name: AttributeName,
+    ) -> Result<()>;
+    async fn add_user_object_class(
+        &self,
+        context: &RequestContext,
+        name: LdapObjectClass,
+    ) -> Result<()>;
+    async fn add_group_object_class(
+        &self,
+        context: &RequestContext,
+        name: LdapObjectClass,
+    ) -> Result<()>;
+    async fn delete_user_object_class(
+        &self,
+        context: &RequestContext,
+        name: LdapObjectClass,
+    ) -> Result<()>;
+    async fn delete_group_object_class(
+        &self,
+        context: &RequestContext,
+        name: LdapObjectClass,
+    ) -> Result<()>;
 }
 
 #[async_trait]
 impl<Handler: BackendHandler> UserReadableBackendHandler for Handler {
-    async fn get_user_details(&self, user_id: &UserId) -> Result<User> {
-        <Handler as UserBackendHandler>::get_user_details(self, user_id).await
+    async fn get_user_details(&self, context: &RequestContext, user_id: UserId) -> Result<User> {
+        <Handler as UserBackendHandler>::get_user_details(self, context, user_id).await
     }
-    async fn get_user_groups(&self, user_id: &UserId) -> Result<HashSet<GroupDetails>> {
-        <Handler as UserBackendHandler>::get_user_groups(self, user_id).await
+    async fn get_user_groups(
+        &self,
+        context: &RequestContext,
+        user_id: UserId,
+    ) -> Result<HashSet<GroupDetails>> {
+        <Handler as UserBackendHandler>::get_user_groups(self, context, user_id).await
     }
-    async fn get_schema(&self) -> Result<PublicSchema> {
+    async fn get_schema(&self, context: &RequestContext) -> Result<PublicSchema> {
         Ok(PublicSchema::from(
-            <Handler as ReadSchemaBackendHandler>::get_schema(self).await?,
+            <Handler as ReadSchemaBackendHandler>::get_schema(self, context).await?,
         ))
     }
 }
@@ -87,71 +157,135 @@ impl<Handler: BackendHandler> UserReadableBackendHandler for Handler {
 impl<Handler: BackendHandler> ReadonlyBackendHandler for Handler {
     async fn list_users(
         &self,
-        filters: Option<UserRequestFilter>,
-        get_groups: bool,
+        context: &RequestContext,
+        filters: ListUsersRequest,
     ) -> Result<Vec<UserAndGroups>> {
-        <Handler as UserListerBackendHandler>::list_users(self, filters, get_groups).await
+        <Handler as UserListerBackendHandler>::list_users(self, context, filters).await
     }
-    async fn list_groups(&self, filters: Option<GroupRequestFilter>) -> Result<Vec<Group>> {
-        <Handler as GroupListerBackendHandler>::list_groups(self, filters).await
+    async fn list_groups(
+        &self,
+        context: &RequestContext,
+        filters: ListGroupsRequest,
+    ) -> Result<Vec<Group>> {
+        <Handler as GroupListerBackendHandler>::list_groups(self, context, filters).await
     }
-    async fn get_group_details(&self, group_id: GroupId) -> Result<GroupDetails> {
-        <Handler as GroupBackendHandler>::get_group_details(self, group_id).await
+    async fn get_group_details(
+        &self,
+        context: &RequestContext,
+        group_id: GroupId,
+    ) -> Result<GroupDetails> {
+        <Handler as GroupBackendHandler>::get_group_details(self, context, group_id).await
     }
 }
 
 #[async_trait]
 impl<Handler: BackendHandler> UserWriteableBackendHandler for Handler {
-    async fn update_user(&self, request: UpdateUserRequest) -> Result<()> {
-        <Handler as UserBackendHandler>::update_user(self, request).await
+    async fn update_user(
+        &self,
+        context: &RequestContext,
+        request: UpdateUserRequest,
+    ) -> Result<()> {
+        <Handler as UserBackendHandler>::update_user(self, context, request).await
     }
 }
 #[async_trait]
 impl<Handler: BackendHandler> AdminBackendHandler for Handler {
-    async fn create_user(&self, request: CreateUserRequest) -> Result<()> {
-        <Handler as UserBackendHandler>::create_user(self, request).await
+    async fn create_user(
+        &self,
+        context: &RequestContext,
+        request: CreateUserRequest,
+    ) -> Result<()> {
+        <Handler as UserBackendHandler>::create_user(self, context, request).await
     }
-    async fn delete_user(&self, user_id: &UserId) -> Result<()> {
-        <Handler as UserBackendHandler>::delete_user(self, user_id).await
+    async fn delete_user(&self, context: &RequestContext, user_id: UserId) -> Result<()> {
+        <Handler as UserBackendHandler>::delete_user(self, context, user_id).await
     }
-    async fn add_user_to_group(&self, user_id: &UserId, group_id: GroupId) -> Result<()> {
-        <Handler as UserBackendHandler>::add_user_to_group(self, user_id, group_id).await
+    async fn add_user_to_group(
+        &self,
+        context: &RequestContext,
+        request: AddUserToGroupRequest,
+    ) -> Result<()> {
+        <Handler as UserBackendHandler>::add_user_to_group(self, context, request).await
     }
-    async fn remove_user_from_group(&self, user_id: &UserId, group_id: GroupId) -> Result<()> {
-        <Handler as UserBackendHandler>::remove_user_from_group(self, user_id, group_id).await
+    async fn remove_user_from_group(
+        &self,
+        context: &RequestContext,
+        request: RemoveUserFromGroupRequest,
+    ) -> Result<()> {
+        <Handler as UserBackendHandler>::remove_user_from_group(self, context, request).await
     }
-    async fn update_group(&self, request: UpdateGroupRequest) -> Result<()> {
-        <Handler as GroupBackendHandler>::update_group(self, request).await
+    async fn update_group(
+        &self,
+        context: &RequestContext,
+        request: UpdateGroupRequest,
+    ) -> Result<()> {
+        <Handler as GroupBackendHandler>::update_group(self, context, request).await
     }
-    async fn create_group(&self, request: CreateGroupRequest) -> Result<GroupId> {
-        <Handler as GroupBackendHandler>::create_group(self, request).await
+    async fn create_group(
+        &self,
+        context: &RequestContext,
+        request: CreateGroupRequest,
+    ) -> Result<GroupId> {
+        <Handler as GroupBackendHandler>::create_group(self, context, request).await
     }
-    async fn delete_group(&self, group_id: GroupId) -> Result<()> {
-        <Handler as GroupBackendHandler>::delete_group(self, group_id).await
+    async fn delete_group(&self, context: &RequestContext, group_id: GroupId) -> Result<()> {
+        <Handler as GroupBackendHandler>::delete_group(self, context, group_id).await
     }
-    async fn add_user_attribute(&self, request: CreateAttributeRequest) -> Result<()> {
-        <Handler as SchemaBackendHandler>::add_user_attribute(self, request).await
+    async fn add_user_attribute(
+        &self,
+        context: &RequestContext,
+        request: CreateAttributeRequest,
+    ) -> Result<()> {
+        <Handler as SchemaBackendHandler>::add_user_attribute(self, context, request).await
     }
-    async fn add_group_attribute(&self, request: CreateAttributeRequest) -> Result<()> {
-        <Handler as SchemaBackendHandler>::add_group_attribute(self, request).await
+    async fn add_group_attribute(
+        &self,
+        context: &RequestContext,
+        request: CreateAttributeRequest,
+    ) -> Result<()> {
+        <Handler as SchemaBackendHandler>::add_group_attribute(self, context, request).await
     }
-    async fn delete_user_attribute(&self, name: &AttributeName) -> Result<()> {
-        <Handler as SchemaBackendHandler>::delete_user_attribute(self, name).await
+    async fn delete_user_attribute(
+        &self,
+        context: &RequestContext,
+        name: AttributeName,
+    ) -> Result<()> {
+        <Handler as SchemaBackendHandler>::delete_user_attribute(self, context, name).await
     }
-    async fn delete_group_attribute(&self, name: &AttributeName) -> Result<()> {
-        <Handler as SchemaBackendHandler>::delete_group_attribute(self, name).await
+    async fn delete_group_attribute(
+        &self,
+        context: &RequestContext,
+        name: AttributeName,
+    ) -> Result<()> {
+        <Handler as SchemaBackendHandler>::delete_group_attribute(self, context, name).await
     }
-    async fn add_user_object_class(&self, name: &LdapObjectClass) -> Result<()> {
-        <Handler as SchemaBackendHandler>::add_user_object_class(self, name).await
+    async fn add_user_object_class(
+        &self,
+        context: &RequestContext,
+        name: LdapObjectClass,
+    ) -> Result<()> {
+        <Handler as SchemaBackendHandler>::add_user_object_class(self, context, name).await
     }
-    async fn add_group_object_class(&self, name: &LdapObjectClass) -> Result<()> {
-        <Handler as SchemaBackendHandler>::add_group_object_class(self, name).await
+    async fn add_group_object_class(
+        &self,
+        context: &RequestContext,
+        name: LdapObjectClass,
+    ) -> Result<()> {
+        <Handler as SchemaBackendHandler>::add_group_object_class(self, context, name).await
     }
-    async fn delete_user_object_class(&self, name: &LdapObjectClass) -> Result<()> {
-        <Handler as SchemaBackendHandler>::delete_user_object_class(self, name).await
+    async fn delete_user_object_class(
+        &self,
+        context: &RequestContext,
+        name: LdapObjectClass,
+    ) -> Result<()> {
+        <Handler as SchemaBackendHandler>::delete_user_object_class(self, context, name).await
     }
-    async fn delete_group_object_class(&self, name: &LdapObjectClass) -> Result<()> {
-        <Handler as SchemaBackendHandler>::delete_group_object_class(self, name).await
+    async fn delete_group_object_class(
+        &self,
+        context: &RequestContext,
+        name: LdapObjectClass,
+    ) -> Result<()> {
+        <Handler as SchemaBackendHandler>::delete_group_object_class(self, context, name).await
     }
 }
 
@@ -232,8 +366,15 @@ impl<Handler: BackendHandler> AccessControlledBackendHandler<Handler> {
         }
     }
 
-    pub async fn get_permissions_for_user(&self, user_id: UserId) -> Result<ValidationResults> {
-        let user_groups = self.handler.get_user_groups(&user_id).await?;
+    pub async fn get_permissions_for_user(
+        &self,
+        context: &RequestContext,
+        user_id: UserId,
+    ) -> Result<ValidationResults> {
+        let user_groups = self
+            .handler
+            .get_user_groups(context, user_id.clone())
+            .await?;
         Ok(self.get_permissions_from_groups(user_id, user_groups.iter().map(|g| &g.display_name)))
     }
 
@@ -271,8 +412,8 @@ pub struct UserRestrictedListerBackendHandler<'a, Handler> {
 impl<Handler: ReadSchemaBackendHandler + Sync> ReadSchemaBackendHandler
     for UserRestrictedListerBackendHandler<'_, Handler>
 {
-    async fn get_schema(&self) -> Result<Schema> {
-        let mut schema = self.handler.get_schema().await?;
+    async fn get_schema(&self, context: &RequestContext) -> Result<Schema> {
+        let mut schema = self.handler.get_schema(context).await?;
         if self.user_filter.is_some() {
             let filter_attributes = |attributes: &mut Vec<AttributeSchema>| {
                 attributes.retain(|a| a.is_visible);
@@ -290,20 +431,28 @@ impl<Handler: UserListerBackendHandler + Sync> UserListerBackendHandler
 {
     async fn list_users(
         &self,
-        filters: Option<UserRequestFilter>,
-        get_groups: bool,
+        context: &RequestContext,
+        filters: ListUsersRequest,
     ) -> Result<Vec<UserAndGroups>> {
         let user_filter = self
             .user_filter
             .as_ref()
             .map(|u| UserRequestFilter::UserId(u.clone()));
-        let filters = match (filters, user_filter) {
+        let filters = match (filters.filter, user_filter) {
             (None, None) => None,
             (None, u) => u,
             (f, None) => f,
             (Some(f), Some(u)) => Some(UserRequestFilter::And(vec![f, u])),
         };
-        self.handler.list_users(filters, get_groups).await
+        self.handler
+            .list_users(
+                context,
+                ListUsersRequest {
+                    filter: filters,
+                    need_groups: true,
+                },
+            )
+            .await
     }
 }
 
@@ -311,18 +460,24 @@ impl<Handler: UserListerBackendHandler + Sync> UserListerBackendHandler
 impl<Handler: GroupListerBackendHandler + Sync> GroupListerBackendHandler
     for UserRestrictedListerBackendHandler<'_, Handler>
 {
-    async fn list_groups(&self, filters: Option<GroupRequestFilter>) -> Result<Vec<Group>> {
+    async fn list_groups(
+        &self,
+        context: &RequestContext,
+        filters: ListGroupsRequest,
+    ) -> Result<Vec<Group>> {
         let group_filter = self
             .user_filter
             .as_ref()
             .map(|u| GroupRequestFilter::Member(u.clone()));
-        let filters = match (filters, group_filter) {
+        let filters = match (filters.filter, group_filter) {
             (None, None) => None,
             (None, u) => u,
             (f, None) => f,
             (Some(f), Some(u)) => Some(GroupRequestFilter::And(vec![f, u])),
         };
-        self.handler.list_groups(filters).await
+        self.handler
+            .list_groups(context, ListGroupsRequest { filter: filters })
+            .await
     }
 }
 
