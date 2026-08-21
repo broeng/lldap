@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BindResult {
+    #[serde(rename = "result_code")]
     pub result_code: LdapResultCode,
+    #[serde(rename = "message")]
     pub message: String,
 }
 

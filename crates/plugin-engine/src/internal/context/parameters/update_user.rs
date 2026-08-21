@@ -1,12 +1,9 @@
 use mlua::{Result as LuaResult, Table};
 
-use lldap_domain::types::{AttributeName, Email, UserId};
+use lldap_domain::types::{Attribute, AttributeName, Email, UserId};
 use lldap_domain_handlers::requests::UpdateUserRequest;
 
-use crate::internal::{
-    context::parameters::utils::{get_opt_arg, get_opt_attrmap, get_opt_vec},
-    types::attribute_map::AttributeMapArgument,
-};
+use crate::internal::context::parameters::utils::{get_opt_arg, get_opt_attrmap, get_opt_vec};
 
 #[derive(Debug, Clone)]
 pub struct UpdateUserParams {
@@ -14,7 +11,7 @@ pub struct UpdateUserParams {
     pub email: Option<String>,
     pub display_name: Option<String>,
     pub delete_attributes: Vec<String>,
-    pub insert_attributes: AttributeMapArgument,
+    pub insert_attributes: Vec<Attribute>,
 }
 
 impl UpdateUserParams {
@@ -29,18 +26,18 @@ impl UpdateUserParams {
     }
 }
 
-impl Into<UpdateUserRequest> for UpdateUserParams {
-    fn into(self) -> UpdateUserRequest {
+impl From<UpdateUserParams> for UpdateUserRequest {
+    fn from(value: UpdateUserParams) -> Self {
         UpdateUserRequest {
-            user_id: UserId::from(self.user_id),
-            email: self.email.map(Email::from),
-            display_name: self.display_name,
-            delete_attributes: self
+            user_id: UserId::from(value.user_id),
+            email: value.email.map(Email::from),
+            display_name: value.display_name,
+            delete_attributes: value
                 .delete_attributes
                 .into_iter()
                 .map(AttributeName::from)
                 .collect(),
-            insert_attributes: self.insert_attributes.0,
+            insert_attributes: value.insert_attributes,
         }
     }
 }

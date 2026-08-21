@@ -1,8 +1,6 @@
-use lldap_domain::types::{Email, UserId};
+use lldap_domain::types::{Attribute, Email, UserId};
 use lldap_domain_handlers::requests::CreateUserRequest;
 use mlua::{Result as LuaResult, Table};
-
-use crate::internal::types::attribute_map::AttributeMapArgument;
 
 use super::utils;
 
@@ -11,7 +9,7 @@ pub struct CreateUserParams {
     pub user_id: String,
     pub email: String,
     pub display_name: String,
-    pub attributes: AttributeMapArgument,
+    pub attributes: Vec<Attribute>,
 }
 impl CreateUserParams {
     pub fn from(args: &Table) -> LuaResult<Self> {
@@ -24,13 +22,13 @@ impl CreateUserParams {
     }
 }
 
-impl Into<CreateUserRequest> for CreateUserParams {
-    fn into(self) -> CreateUserRequest {
+impl From<CreateUserParams> for CreateUserRequest {
+    fn from(value: CreateUserParams) -> Self {
         CreateUserRequest {
-            user_id: UserId::from(self.user_id),
-            email: Email::from(self.email),
-            display_name: self.display_name.into(),
-            attributes: self.attributes.0,
+            user_id: UserId::from(value.user_id),
+            email: Email::from(value.email),
+            display_name: value.display_name.into(),
+            attributes: value.attributes,
         }
     }
 }

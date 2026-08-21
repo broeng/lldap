@@ -1,18 +1,28 @@
-use mlua::{Error, FromLua, IntoLua, Lua, LuaSerdeExt, Result as LuaResult, Value};
+use mlua::{FromLua, IntoLua, Lua, LuaSerdeExt, Result as LuaResult, Value};
 use serde::{Deserialize, Serialize};
 
-use lldap_domain::types::{AttributeName, Email, UserId};
+use lldap_domain::types::{Attribute, AttributeName, Email, UserId};
 use lldap_domain_handlers::requests::UpdateUserRequest;
-
-use crate::internal::types::attribute_map::AttributeMapArgument;
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct UpdateUserArguments {
+    #[serde(rename = "user_id")]
     pub user_id: String,
+    #[serde(rename = "email", default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+    #[serde(
+        rename = "display_name",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub display_name: Option<String>,
+    #[serde(rename = "delete_attributes")]
     pub delete_attributes: Vec<String>,
-    pub insert_attributes: AttributeMapArgument,
+    #[serde(
+        rename = "insert_attributes",
+        with = "crate::internal::types::attribute_map"
+    )]
+    pub insert_attributes: Vec<Attribute>,
 }
 
 impl UpdateUserArguments {
@@ -26,7 +36,7 @@ impl UpdateUserArguments {
                 .into_iter()
                 .map(AttributeName::into_string)
                 .collect(),
-            insert_attributes: AttributeMapArgument(request.insert_attributes),
+            insert_attributes: request.insert_attributes,
         }
     }
 
@@ -40,50 +50,19 @@ impl UpdateUserArguments {
                 .into_iter()
                 .map(AttributeName::from)
                 .collect(),
-            insert_attributes: self.insert_attributes.0,
+            insert_attributes: self.insert_attributes,
         }
     }
 }
 
 impl IntoLua for UpdateUserArguments {
     fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
-        let t = lua.create_table()?;
-        t.set("user_id", lua.to_value(&self.user_id)?)?;
-        t.set(
-            "email",
-            match self.email {
-                Some(email) => lua.to_value(&email)?,
-                None => Value::Nil,
-            },
-        )?;
-        t.set(
-            "display_name",
-            match self.display_name {
-                Some(n) => lua.to_value(&n)?,
-                None => Value::Nil,
-            },
-        )?;
-        t.set("delete_attributes", self.delete_attributes)?;
-        t.set("insert_attributes", self.insert_attributes)?;
-        Ok(Value::Table(t))
+        lua.to_value(&self)
     }
 }
 
 impl FromLua for UpdateUserArguments {
-    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
-        match value {
-            Value::Table(t) => Ok(UpdateUserArguments {
-                user_id: t.get("user_id")?,
-                email: t.get("email")?,
-                display_name: t.get("display_name")?,
-                delete_attributes: t.get("delete_attributes")?,
-                insert_attributes: t.get("insert_attributes")?,
-            }),
-            _ => Err(Error::FromLuaConversionError {
-                from: "{unknown}",
-                to: "UpdateUserArguments".to_string(),
-                message: Some("Lua table expected".to_string()),
-            }),
-        }
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
+        lua.from_value(value)
     }
 }

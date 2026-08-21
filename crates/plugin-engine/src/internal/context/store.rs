@@ -1,5 +1,5 @@
 use lldap_key_value_store::api::store::{KeyValueStore, Scope};
-use mlua::{Error, Lua, LuaSerdeExt, Table, UserData, UserDataMethods, Value};
+use mlua::{Error, LuaSerdeExt, Table, UserData, UserDataMethods, Value};
 
 use serde_json::Value as JsonValue;
 
@@ -8,7 +8,6 @@ use crate::internal::types::result::MyLuaResult;
 pub struct LuaKeyValueStoreAPI<KVStore: KeyValueStore + 'static> {
     pub kvstore: KVStore,
     pub kvscope: Scope,
-    pub lua: &'static Lua,
 }
 
 impl<KVStore: KeyValueStore> UserData for LuaKeyValueStoreAPI<KVStore> {
@@ -33,10 +32,9 @@ impl<KVStore: KeyValueStore> UserData for LuaKeyValueStoreAPI<KVStore> {
                 }
             }
         });
-        methods.add_async_method("store_table", |_, ctx, (key, val): (String, Table)| {
+        methods.add_async_method("store_table", |lua, ctx, (key, val): (String, Table)| {
             let kvstore = ctx.kvstore.clone();
             let kvscope = ctx.kvscope.clone();
-            let lua: &'static Lua = ctx.lua;
             async move {
                 let json_value_res: Result<JsonValue, Error> =
                     lua.from_value(Value::Table(val.clone()));
@@ -75,17 +73,16 @@ impl<KVStore: KeyValueStore> UserData for LuaKeyValueStoreAPI<KVStore> {
                 }
             }
         });
-        methods.add_async_method("fetch_table", |_, ctx, key: String| {
+        methods.add_async_method("fetch_table", |lua, ctx, key: String| {
             let kvstore = ctx.kvstore.clone();
             let kvscope = ctx.kvscope.clone();
-            let lua: &'static Lua = ctx.lua;
             async move {
                 match kvstore.fetch::<String>(kvscope, key).await {
                     Ok(v) => match v {
                         Some(s) => match serde_json::from_str::<JsonValue>(s.as_str()) {
                             Ok(json_value) => Ok(MyLuaResult(
                                 lua.to_value(&json_value)
-                                    .map(|v| Some(v))
+                                    .map(Some)
                                     .map_err(|e| e.to_string()),
                             )),
                             Err(e) => Ok(MyLuaResult(Err(e.to_string()))),

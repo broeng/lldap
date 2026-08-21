@@ -1,15 +1,13 @@
-use lldap_domain::types::GroupName;
+use lldap_domain::types::{Attribute, GroupName};
 use lldap_domain_handlers::requests::CreateGroupRequest;
 use mlua::{Result as LuaResult, Table};
-
-use crate::internal::types::attribute_map::AttributeMapArgument;
 
 use super::utils;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct CreateGroupParams {
     pub display_name: String,
-    pub attributes: AttributeMapArgument,
+    pub attributes: Vec<Attribute>,
 }
 impl CreateGroupParams {
     pub fn from(args: &Table) -> LuaResult<Self> {
@@ -20,11 +18,11 @@ impl CreateGroupParams {
     }
 }
 
-impl Into<CreateGroupRequest> for CreateGroupParams {
-    fn into(self) -> CreateGroupRequest {
+impl From<CreateGroupParams> for CreateGroupRequest {
+    fn from(value: CreateGroupParams) -> Self {
         CreateGroupRequest {
-            display_name: GroupName::from(self.display_name),
-            attributes: self.attributes.0,
+            display_name: GroupName::from(value.display_name),
+            attributes: value.attributes,
         }
     }
 }

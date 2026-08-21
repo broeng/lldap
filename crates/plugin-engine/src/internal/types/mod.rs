@@ -8,4 +8,3 @@ pub mod result;
 pub mod schema;
 pub mod secret;
 pub mod user;
-pub mod uuid;

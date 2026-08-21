@@ -52,9 +52,9 @@ impl From<SearchResult> for InternalSearchResults {
     }
 }
 
-impl Into<SearchResult> for InternalSearchResults {
-    fn into(self) -> SearchResult {
-        match self {
+impl From<InternalSearchResults> for SearchResult {
+    fn from(val: InternalSearchResults) -> Self {
+        match val {
             InternalSearchResults::UsersAndGroups(u, g) => SearchResult::UsersAndGroups(u, g),
             InternalSearchResults::Raw(ldap_ops) => SearchResult::Ldap(ldap_ops),
             InternalSearchResults::Empty => SearchResult::Empty,
@@ -450,7 +450,7 @@ pub async fn do_search<Events: LdapEventHandler>(
     let search_results = event_handler
         .on_ldap_search_result(
             context,
-            &request,
+            request,
             do_search_internal(ldap_info, backend_handler, request, &schema, context).await?,
         )
         .await;

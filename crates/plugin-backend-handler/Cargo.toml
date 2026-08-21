@@ -1,0 +1,62 @@
+[package]
+name = "lldap_plugin_backend_handler"
+version = "0.1.0"
+description = "Backend handler dispatching plugin events"
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+tracing = { workspace = true }
+
+ldap3_proto = { workspace = true }
+
+[dependencies.lldap_auth]
+path = "../auth"
+features = ["opaque_server", "opaque_client", "sea_orm"]
+
+[dependencies.lldap_domain]
+path = "../domain"
+
+[dependencies.lldap_domain_handlers]
+path = "../domain-handlers"
+
+[dependencies.lldap_domain_model]
+path = "../domain-model"
+
+[dependencies.lldap_ldap]
+path = "../ldap"
+
+[dependencies.lldap_opaque_handler]
+path = "../opaque-handler"
+
+[dependencies.lldap_plugin_engine]
+path = "../plugin-engine"
+
+[dependencies.lldap_plugin_kv_store]
+path = "../plugin-kv-store"
+
+[dependencies.lldap_sql_backend_handler]
+path = "../sql-backend-handler"
+
+[dev-dependencies]
+mockall = { workspace = true }
+pretty_assertions = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies.sea-orm]
+workspace = true
+
+[dev-dependencies.lldap_domain_handlers]
+path = "../domain-handlers"
+features = ["test"]
+
+[dev-dependencies.lldap_key_value_store]
+path = "../key-value-store"
+
+[dev-dependencies.lldap_test_utils]
+path = "../test-utils"

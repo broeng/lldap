@@ -145,19 +145,58 @@ impl From<bool> for GroupRequestFilter {
     }
 }
 
+// A plugin that has a callback running for a request.
+#[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
+pub struct PluginInvocation {
+    pub plugin_name: String,
+}
+
+impl PluginInvocation {
+    pub fn new(plugin_name: &str) -> Self {
+        Self {
+            plugin_name: plugin_name.to_owned(),
+        }
+    }
+}
+
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
 pub struct RequestContext {
     pub validation_results: Option<ValidationResults>,
+    // The plugin callbacks that this request runs in, outermost first.
+    #[serde(default)]
+    pub plugin_stack: Vec<PluginInvocation>,
 }
 
 impl RequestContext {
     pub fn new(validation_results: Option<ValidationResults>) -> Self {
-        Self { validation_results }
+        Self {
+            validation_results,
+            plugin_stack: Vec::new(),
+        }
     }
     pub fn empty() -> Self {
         Self {
             validation_results: None,
+            plugin_stack: Vec::new(),
         }
+    }
+
+    // Returns the context for the backend calls that a plugin makes.
+    pub fn entering_plugin(&self, plugin_name: &str) -> Self {
+        let mut plugin_stack = self.plugin_stack.clone();
+        plugin_stack.push(PluginInvocation::new(plugin_name));
+        Self {
+            validation_results: self.validation_results.clone(),
+            plugin_stack,
+        }
+    }
+
+    pub fn calling_plugin(&self) -> Option<&PluginInvocation> {
+        self.plugin_stack.last()
+    }
+
+    pub fn plugin_depth(&self) -> usize {
+        self.plugin_stack.len()
     }
     #[cfg(feature = "test")]
     pub fn admin(name: &str) -> Self {

@@ -1,19 +1,16 @@
 use mlua::{Result as LuaResult, Table};
 
-use lldap_domain::types::{AttributeName, GroupId, GroupName};
+use lldap_domain::types::{Attribute, AttributeName, GroupId, GroupName};
 use lldap_domain_handlers::requests::UpdateGroupRequest;
 
-use crate::internal::{
-    context::parameters::utils::{get_opt_arg, get_opt_attrmap, get_opt_vec},
-    types::attribute_map::AttributeMapArgument,
-};
+use crate::internal::context::parameters::utils::{get_opt_arg, get_opt_attrmap, get_opt_vec};
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct UpdateGroupParams {
     pub group_id: i32,
     pub display_name: Option<String>,
     pub delete_attributes: Vec<String>,
-    pub insert_attributes: AttributeMapArgument,
+    pub insert_attributes: Vec<Attribute>,
 }
 
 impl UpdateGroupParams {
@@ -27,17 +24,17 @@ impl UpdateGroupParams {
     }
 }
 
-impl Into<UpdateGroupRequest> for UpdateGroupParams {
-    fn into(self) -> UpdateGroupRequest {
+impl From<UpdateGroupParams> for UpdateGroupRequest {
+    fn from(value: UpdateGroupParams) -> Self {
         UpdateGroupRequest {
-            group_id: GroupId(self.group_id),
-            display_name: self.display_name.map(GroupName::from),
-            delete_attributes: self
+            group_id: GroupId(value.group_id),
+            display_name: value.display_name.map(GroupName::from),
+            delete_attributes: value
                 .delete_attributes
                 .into_iter()
                 .map(AttributeName::from)
                 .collect(),
-            insert_attributes: self.insert_attributes.0,
+            insert_attributes: value.insert_attributes,
         }
     }
 }

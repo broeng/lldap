@@ -6,10 +6,15 @@ use lldap_domain_handlers::requests::CreateAttributeRequest;
 
 #[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAttributeParams {
+    #[serde(rename = "name")]
     pub name: String,
+    #[serde(rename = "attribute_type")]
     pub attribute_type: AttributeType,
+    #[serde(rename = "is_list")]
     pub is_list: bool,
+    #[serde(rename = "is_visible")]
     pub is_visible: bool,
+    #[serde(rename = "is_editable")]
     pub is_editable: bool,
 }
 
@@ -37,14 +42,14 @@ impl From<CreateAttributeRequest> for CreateAttributeParams {
     }
 }
 
-impl Into<CreateAttributeRequest> for CreateAttributeParams {
-    fn into(self) -> CreateAttributeRequest {
+impl From<CreateAttributeParams> for CreateAttributeRequest {
+    fn from(value: CreateAttributeParams) -> Self {
         CreateAttributeRequest {
-            name: self.name.into(),
-            attribute_type: self.attribute_type,
-            is_list: self.is_list,
-            is_visible: self.is_visible,
-            is_editable: self.is_editable,
+            name: value.name.into(),
+            attribute_type: value.attribute_type,
+            is_list: value.is_list,
+            is_visible: value.is_visible,
+            is_editable: value.is_editable,
         }
     }
 }

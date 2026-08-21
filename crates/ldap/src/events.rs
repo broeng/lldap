@@ -71,9 +71,7 @@ impl LdapEventHandler for NoopLdapEventHandler {
     ) -> BindResult {
         bind_result
     }
-    async fn on_ldap_unbind(&self, _context: &RequestContext, _user_id: Option<UserId>) -> () {
-        ()
-    }
+    async fn on_ldap_unbind(&self, _context: &RequestContext, _user_id: Option<UserId>) -> () {}
     async fn on_ldap_modify(
         &self,
         _context: &RequestContext,
@@ -96,7 +94,6 @@ impl LdapEventHandler for NoopLdapEventHandler {
         _user_id: &UserId,
         _password: &[u8],
     ) -> () {
-        ()
     }
     async fn on_ldap_search_result(
         &self,

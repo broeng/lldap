@@ -12,6 +12,7 @@ pub enum SecretPermissions {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Permissions {
+    #[serde(rename = "secrets")]
     pub secrets: SecretPermissions,
 }
 

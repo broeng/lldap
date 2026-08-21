@@ -36,7 +36,6 @@ impl KeyValueStore for PluginKeyValueStore {
             scope: ActiveValue::Set(scope.0.clone()),
             key: ActiveValue::Set(key.clone()),
             value: ActiveValue::Set(serialized_value),
-            ..Default::default()
         };
         // Effectively perform an UPSERT
         model::PluginKeyValues::insert(entry)
@@ -98,7 +97,6 @@ impl KeyValueStore for PluginKeyValueStore {
                         scope: ActiveValue::Set(scope.0.clone()),
                         key: ActiveValue::Set(key),
                         value: ActiveValue::Set(Serialized::from(&next_val)),
-                        ..Default::default()
                     };
                     // Effectively perform an UPSERT
                     model::PluginKeyValues::insert(entry)

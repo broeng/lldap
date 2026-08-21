@@ -1,17 +1,26 @@
-use mlua::{Error, FromLua, IntoLua, Lua, LuaSerdeExt, Result as LuaResult, Value};
+use mlua::{FromLua, IntoLua, Lua, LuaSerdeExt, Result as LuaResult, Value};
 use serde::{Deserialize, Serialize};
 
-use lldap_domain::types::{AttributeName, GroupId, GroupName};
+use lldap_domain::types::{Attribute, AttributeName, GroupId, GroupName};
 use lldap_domain_handlers::requests::UpdateGroupRequest;
-
-use crate::internal::types::attribute_map::AttributeMapArgument;
 
 #[derive(Clone, Serialize, Deserialize, Default, Debug, tealr::ToTypename)]
 pub struct UpdateGroupArguments {
+    #[serde(rename = "group_id")]
     pub group_id: i32,
+    #[serde(
+        rename = "display_name",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub display_name: Option<String>,
+    #[serde(rename = "delete_attributes")]
     pub delete_attributes: Vec<String>,
-    pub insert_attributes: AttributeMapArgument,
+    #[serde(
+        rename = "insert_attributes",
+        with = "crate::internal::types::attribute_map"
+    )]
+    pub insert_attributes: Vec<Attribute>,
 }
 
 impl UpdateGroupArguments {
@@ -24,7 +33,7 @@ impl UpdateGroupArguments {
                 .into_iter()
                 .map(AttributeName::into_string)
                 .collect(),
-            insert_attributes: AttributeMapArgument(request.insert_attributes),
+            insert_attributes: request.insert_attributes,
         }
     }
 
@@ -37,36 +46,19 @@ impl UpdateGroupArguments {
                 .into_iter()
                 .map(AttributeName::from)
                 .collect(),
-            insert_attributes: self.insert_attributes.0,
+            insert_attributes: self.insert_attributes,
         }
     }
 }
 
 impl IntoLua for UpdateGroupArguments {
     fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
-        let t = lua.create_table()?;
-        t.set("group_id", lua.to_value(&self.group_id)?)?;
-        t.set("display_name", lua.to_value(&self.display_name)?)?;
-        t.set("delete_attributes", self.delete_attributes)?;
-        t.set("insert_attributes", self.insert_attributes)?;
-        Ok(Value::Table(t))
+        lua.to_value(&self)
     }
 }
 
 impl FromLua for UpdateGroupArguments {
-    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
-        match value {
-            Value::Table(t) => Ok(UpdateGroupArguments {
-                group_id: t.get("group_id")?,
-                display_name: t.get("display_name")?,
-                delete_attributes: t.get("delete_attributes")?,
-                insert_attributes: t.get("insert_attributes")?,
-            }),
-            _ => Err(Error::FromLuaConversionError {
-                from: "{unknown}",
-                to: "UpdateGroupArguments".to_string(),
-                message: Some("Lua table expected".to_string()),
-            }),
-        }
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
+        lua.from_value(value)
     }
 }

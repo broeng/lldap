@@ -9,16 +9,14 @@ macro_rules! declare_plugin_registry {
     ($($is:ident),+) => {
         #[derive(Clone)]
         pub struct PluginRegistry {
-            pub lua: &'static Lua,
             pub plugins: Vec<Arc<Plugin>>,
             pub init: Vec<Callback>,
             $(pub $is: Vec<Callback>),*
         }
 
         impl PluginRegistry {
-            pub fn new(lua: &'static mlua::Lua) -> Self {
+            pub fn new() -> Self {
                 Self {
-                    lua,
                     plugins: Vec::new(),
                     init: Vec::new(),
                     $($is : Vec::new()),*
@@ -109,6 +107,7 @@ pub struct Plugin {
     pub permissions: Permissions,
     pub configuration: BTreeMap<String, String>,
     pub kvstore_scope: Scope,
+    pub lua: Lua,
 }
 
 #[derive(Clone)]

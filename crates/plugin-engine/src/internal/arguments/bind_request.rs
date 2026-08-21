@@ -1,35 +1,25 @@
 use ldap3_proto::proto::LdapBindRequest;
-use mlua::{Error, FromLua, IntoLua, Lua, LuaSerdeExt, Value};
+use mlua::{FromLua, IntoLua, Lua, LuaSerdeExt, Value};
+use serde::{Deserialize, Serialize};
 
 use crate::api::arguments::ldap_bind_result::BindResult;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BindRequestArguments {
+    #[serde(rename = "bind_result")]
     pub bind_result: BindResult,
+    #[serde(rename = "bind_request")]
     pub bind_request: LdapBindRequest,
 }
 
 impl IntoLua for BindRequestArguments {
     fn into_lua(self, lua: &Lua) -> mlua::Result<Value> {
-        let t = lua.create_table()?;
-        t.set("bind_result", self.bind_result)?;
-        t.set("bind_request", lua.to_value(&self.bind_request)?)?;
-        Ok(Value::Table(t))
+        lua.to_value(&self)
     }
 }
 
 impl FromLua for BindRequestArguments {
     fn from_lua(value: Value, lua: &Lua) -> mlua::Result<Self> {
-        match value {
-            Value::Table(t) => Ok(BindRequestArguments {
-                bind_result: t.get("bind_result")?,
-                bind_request: lua.from_value(t.get("bind_request")?)?,
-            }),
-            _ => Err(Error::FromLuaConversionError {
-                from: "{unknown}",
-                to: "BindRequestArguments".to_string(),
-                message: Some("Lua table expected".to_string()),
-            }),
-        }
+        lua.from_value(value)
     }
 }

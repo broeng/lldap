@@ -1,5 +1,14 @@
 pub mod exec_utils;
 pub mod lua_scripts;
 pub mod mock_backend;
-pub mod tests;
+pub mod roundtrip_utils;
+pub mod tests_encoding;
+pub mod tests_hashing;
+pub mod tests_init;
+pub mod tests_kvstore;
+pub mod tests_lib;
+pub mod tests_roundtrip_arguments;
+pub mod tests_roundtrip_core;
+pub mod tests_roundtrip_ldap;
+pub mod tests_strings;
 pub mod utils;

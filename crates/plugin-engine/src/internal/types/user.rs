@@ -1,18 +1,29 @@
 use crate::internal::types::{datetime::LuaDateTime, group::LuaGroupDetails};
-use lldap_domain::types::{Email, User, UserAndGroups, UserId, Uuid};
-use mlua::{Error, FromLua, IntoLua, Lua, LuaSerdeExt, Result as LuaResult, Value};
+use lldap_domain::types::{Attribute, Email, User, UserAndGroups, UserId, Uuid};
+use mlua::{FromLua, IntoLua, Lua, LuaSerdeExt, Result as LuaResult, Value};
+use serde::{Deserialize, Serialize};
 
-use super::attribute_map::AttributeMapArgument;
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LuaUser {
+    #[serde(rename = "user_id")]
     pub user_id: String,
+    #[serde(rename = "email")]
     pub email: String,
+    #[serde(
+        rename = "display_name",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub display_name: Option<String>,
+    #[serde(rename = "creation_date")]
     pub creation_date: LuaDateTime,
+    #[serde(rename = "uuid")]
     pub uuid: String,
-    pub attributes: AttributeMapArgument,
+    #[serde(rename = "attributes", with = "crate::internal::types::attribute_map")]
+    pub attributes: Vec<Attribute>,
+    #[serde(rename = "modified_date")]
     pub modified_date: LuaDateTime,
+    #[serde(rename = "password_modified_date")]
     pub password_modified_date: LuaDateTime,
 }
 
@@ -24,106 +35,65 @@ impl From<User> for LuaUser {
             display_name: user.display_name,
             creation_date: user.creation_date.into(),
             uuid: user.uuid.into_string(),
-            attributes: AttributeMapArgument(user.attributes),
+            attributes: user.attributes,
             modified_date: user.modified_date.into(),
             password_modified_date: user.password_modified_date.into(),
         }
     }
 }
 
-impl Into<User> for LuaUser {
-    fn into(self) -> User {
+impl From<LuaUser> for User {
+    fn from(value: LuaUser) -> Self {
         User {
-            user_id: UserId::from(self.user_id),
-            email: Email::from(self.email),
-            display_name: self.display_name,
-            creation_date: self.creation_date.datetime,
-            uuid: Uuid::try_from(self.uuid.as_str()).unwrap(),
-            attributes: self.attributes.0,
-            modified_date: self.modified_date.datetime,
-            password_modified_date: self.password_modified_date.datetime,
+            user_id: UserId::from(value.user_id),
+            email: Email::from(value.email),
+            display_name: value.display_name,
+            creation_date: value.creation_date.datetime,
+            uuid: Uuid::try_from(value.uuid.as_str()).unwrap(),
+            attributes: value.attributes,
+            modified_date: value.modified_date.datetime,
+            password_modified_date: value.password_modified_date.datetime,
         }
     }
 }
 
 impl IntoLua for LuaUser {
     fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
-        let t = lua.create_table()?;
-        t.set("user_id", lua.to_value(&self.user_id)?)?;
-        t.set("email", lua.to_value(&self.email)?)?;
-        t.set("display_name", lua.to_value(&self.display_name)?)?;
-        t.set("creation_date", self.creation_date)?;
-        t.set("uuid", lua.to_value(&self.uuid)?)?;
-        t.set("attributes", self.attributes)?;
-        t.set("modified_date", self.modified_date)?;
-        t.set("password_modified_date", self.password_modified_date)?;
-        Ok(Value::Table(t))
+        lua.to_value(&self)
     }
 }
 
 impl FromLua for LuaUser {
-    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
-        match value {
-            Value::Table(t) => Ok(LuaUser {
-                user_id: t.get("user_id")?,
-                email: t.get("email")?,
-                display_name: t.get("display_name")?,
-                creation_date: t.get("creation_date")?,
-                uuid: t.get("uuid")?,
-                attributes: t.get("attributes")?,
-                modified_date: t.get("modified_date")?,
-                password_modified_date: t.get("password_modified_date")?,
-            }),
-            _ => Err(Error::FromLuaConversionError {
-                from: "{unknown}",
-                to: "LuaUser".to_string(),
-                message: Some("Lua table expected".to_string()),
-            }),
-        }
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
+        lua.from_value(value)
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LuaUserAndGroups {
+    #[serde(rename = "user")]
     pub user: LuaUser,
+    // The key is not set for `None`, so that plugins get `nil` for "not fetched" and an empty
+    // table for "no groups". Without this, `lua.to_value` gives mlua's null value.
+    #[serde(rename = "groups", default, skip_serializing_if = "Option::is_none")]
     pub groups: Option<Vec<LuaGroupDetails>>,
 }
 
 impl IntoLua for LuaUserAndGroups {
     fn into_lua(self, lua: &mlua::Lua) -> mlua::Result<mlua::Value> {
-        let t = lua.create_table()?;
-        let groups = self.groups.unwrap_or_default();
-        t.set("user", self.user)?;
-        t.set("groups", groups)?;
-        Ok(Value::Table(t))
+        lua.to_value(&self)
     }
 }
 
 impl FromLua for LuaUserAndGroups {
-    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
-        match value {
-            Value::Table(t) => {
-                let groups: Vec<LuaGroupDetails> = t.get("groups")?;
-                Ok(LuaUserAndGroups {
-                    user: t.get("user")?,
-                    groups: if groups.is_empty() {
-                        None
-                    } else {
-                        Some(groups)
-                    },
-                })
-            }
-            _ => Err(Error::FromLuaConversionError {
-                from: "{unknown}",
-                to: "LuaUserAndGroups".to_string(),
-                message: Some("Lua table expected".to_string()),
-            }),
-        }
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
+        lua.from_value(value)
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LuaUserAndGroupsVec {
+    #[serde(rename = "user_and_groups")]
     pub user_and_groups: Vec<LuaUserAndGroups>,
 }
 
@@ -131,22 +101,20 @@ impl From<UserAndGroups> for LuaUserAndGroups {
     fn from(ug: UserAndGroups) -> Self {
         LuaUserAndGroups {
             user: ug.user.into(),
-            groups: match ug.groups {
-                Some(groups) => Some(groups.into_iter().map(|g| g.into()).collect()),
-                None => None,
-            },
+            groups: ug
+                .groups
+                .map(|groups| groups.into_iter().map(Into::into).collect()),
         }
     }
 }
 
-impl Into<UserAndGroups> for LuaUserAndGroups {
-    fn into(self) -> UserAndGroups {
+impl From<LuaUserAndGroups> for UserAndGroups {
+    fn from(value: LuaUserAndGroups) -> Self {
         UserAndGroups {
-            user: self.user.into(),
-            groups: match self.groups {
-                Some(groups) => Some(groups.into_iter().map(LuaGroupDetails::into).collect()),
-                None => None,
-            },
+            user: value.user.into(),
+            groups: value
+                .groups
+                .map(|groups| groups.into_iter().map(LuaGroupDetails::into).collect()),
         }
     }
 }
@@ -158,9 +126,10 @@ impl From<Vec<UserAndGroups>> for LuaUserAndGroupsVec {
         }
     }
 }
-impl Into<Vec<UserAndGroups>> for LuaUserAndGroupsVec {
-    fn into(self) -> Vec<UserAndGroups> {
-        self.user_and_groups
+impl From<LuaUserAndGroupsVec> for Vec<UserAndGroups> {
+    fn from(value: LuaUserAndGroupsVec) -> Self {
+        value
+            .user_and_groups
             .into_iter()
             .map(LuaUserAndGroups::into)
             .collect()
@@ -168,23 +137,12 @@ impl Into<Vec<UserAndGroups>> for LuaUserAndGroupsVec {
 }
 
 impl FromLua for LuaUserAndGroupsVec {
-    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
-        match value {
-            Value::Table(t) => Ok(LuaUserAndGroupsVec {
-                user_and_groups: t.get("user_and_groups")?,
-            }),
-            _ => Err(Error::FromLuaConversionError {
-                from: "{unknown}",
-                to: "LuaUserAndGroupsVec".to_string(),
-                message: Some("Lua table expected".to_string()),
-            }),
-        }
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
+        lua.from_value(value)
     }
 }
 impl IntoLua for LuaUserAndGroupsVec {
     fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
-        let t = lua.create_table()?;
-        t.set("user_and_groups", self.user_and_groups)?;
-        Ok(Value::Table(t))
+        lua.to_value(&self)
     }
 }

@@ -120,6 +120,9 @@ path = "../crates/opaque-handler"
 [dependencies.lldap_validation]
 path = "../crates/validation"
 
+[dependencies.lldap_plugin_backend_handler]
+path = "../crates/plugin-backend-handler"
+
 [dependencies.lldap_plugin_engine]
 path = "../crates/plugin-engine"
 

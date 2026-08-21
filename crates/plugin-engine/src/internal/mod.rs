@@ -4,5 +4,6 @@ pub mod exec;
 pub mod handler;
 pub mod lualib;
 pub mod plugins;
+pub mod reentrancy;
 pub mod secrets;
 pub mod types;
