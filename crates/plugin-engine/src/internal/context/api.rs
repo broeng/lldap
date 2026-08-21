@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use lldap_domain::types::{AttributeName, GroupDetails, GroupId, UserId};
 
 use lldap_domain_handlers::handler::RequestContext;
-use mlua::{FromLua, Lua, LuaSerdeExt, Table, UserData, UserDataMethods, Value};
+use mlua::{FromLua, LuaSerdeExt, Table, UserData, UserDataMethods, Value};
 
 use crate::{
     api::backend::BackendAPI,
@@ -24,8 +26,7 @@ pub struct LuaBackendAPI<A>
 where
     A: BackendAPI + 'static,
 {
-    pub underlying: &'static A,
-    pub lua: &'static Lua,
+    pub underlying: Arc<A>,
     pub context: RequestContext,
 }
 
@@ -34,9 +35,9 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
         //
         // User Listing
         //
-        methods.add_async_method("list_users", |_, ctx, args: Value| {
-            let params: Result<ListQueryParam, mlua::Error> = FromLua::from_lua(args, &ctx.lua);
-            let api: &'static A = ctx.underlying;
+        methods.add_async_method("list_users", |lua, ctx, args: Value| {
+            let params: Result<ListQueryParam, mlua::Error> = FromLua::from_lua(args, &lua);
+            let api: Arc<A> = ctx.underlying.clone();
             async move {
                 match params {
                     Ok(p) => match api.list_users(&ctx.context, p.filter).await {
@@ -53,9 +54,9 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
         //
         // Group Listing
         //
-        methods.add_async_method("list_groups", |_, ctx, args: Value| {
-            let params: Result<ListQueryParam, mlua::Error> = FromLua::from_lua(args, &ctx.lua);
-            let api: &'static A = ctx.underlying;
+        methods.add_async_method("list_groups", |lua, ctx, args: Value| {
+            let params: Result<ListQueryParam, mlua::Error> = FromLua::from_lua(args, &lua);
+            let api: Arc<A> = ctx.underlying.clone();
             async move {
                 match params {
                     Ok(p) => match api.list_groups(&ctx.context, p.filter).await {
@@ -72,9 +73,8 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
         //
         // Read Schema
         //
-        methods.add_async_method("get_schema", |_, ctx, ()| {
-            let api: &'static A = ctx.underlying;
-            let lua: &'static Lua = ctx.lua;
+        methods.add_async_method("get_schema", |lua, ctx, ()| {
+            let api: Arc<A> = ctx.underlying.clone();
             async move {
                 match api.get_schema(&ctx.context).await {
                     Ok(s) => {
@@ -93,7 +93,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
         methods.add_async_method(
             "add_user_attribute",
             |_, ctx, args: CreateAttributeParams| {
-                let api: &'static A = ctx.underlying;
+                let api: Arc<A> = ctx.underlying.clone();
                 async move {
                     Ok(MyLuaResult(
                         api.add_user_attribute(&ctx.context, args.into()).await,
@@ -104,7 +104,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
         methods.add_async_method(
             "add_group_attribute",
             |_, ctx, args: CreateAttributeParams| {
-                let api: &'static A = ctx.underlying;
+                let api: Arc<A> = ctx.underlying.clone();
                 async move {
                     Ok(MyLuaResult(
                         api.add_group_attribute(&ctx.context, args.into()).await,
@@ -114,7 +114,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
         );
         methods.add_async_method("delete_user_attribute", |_, ctx, name: String| {
             let attr = AttributeName::from(&name);
-            let api: &'static A = ctx.underlying;
+            let api: Arc<A> = ctx.underlying.clone();
             async move {
                 Ok(MyLuaResult(
                     api.delete_user_attribute(&ctx.context, attr).await,
@@ -123,7 +123,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
         });
         methods.add_async_method("delete_group_attribute", |_, ctx, name: String| {
             let attr = AttributeName::from(&name);
-            let api: &'static A = ctx.underlying;
+            let api: Arc<A> = ctx.underlying.clone();
             async move {
                 Ok(MyLuaResult(
                     api.delete_group_attribute(&ctx.context, attr).await,
@@ -131,7 +131,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
             }
         });
         methods.add_async_method("add_user_object_class", |_, ctx, name: String| {
-            let api: &'static A = ctx.underlying;
+            let api: Arc<A> = ctx.underlying.clone();
             async move {
                 Ok(MyLuaResult(
                     api.add_user_object_class(&ctx.context, name.into()).await,
@@ -139,7 +139,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
             }
         });
         methods.add_async_method("delete_user_object_class", |_, ctx, name: String| {
-            let api: &'static A = ctx.underlying;
+            let api: Arc<A> = ctx.underlying.clone();
             async move {
                 Ok(MyLuaResult(
                     api.delete_user_object_class(&ctx.context, name.into())
@@ -148,7 +148,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
             }
         });
         methods.add_async_method("add_group_object_class", |_, ctx, name: String| {
-            let api: &'static A = ctx.underlying;
+            let api: Arc<A> = ctx.underlying.clone();
             async move {
                 Ok(MyLuaResult(
                     api.add_group_object_class(&ctx.context, name.into()).await,
@@ -156,7 +156,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
             }
         });
         methods.add_async_method("delete_group_object_class", |_, ctx, n: String| {
-            let api: &'static A = ctx.underlying;
+            let api: Arc<A> = ctx.underlying.clone();
             async move {
                 Ok(MyLuaResult(
                     api.delete_group_object_class(&ctx.context, n.into()).await,
@@ -167,7 +167,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
         // Groups
         //
         methods.add_async_method("get_group_details", |_, ctx, group_id: i32| {
-            let api: &'static A = ctx.underlying;
+            let api: Arc<A> = ctx.underlying.clone();
             async move {
                 match api.get_group_details(&ctx.context, GroupId(group_id)).await {
                     Ok(group) => {
@@ -180,7 +180,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
         });
         methods.add_async_method("update_group", |_, ctx, args: Table| {
             let params = UpdateGroupParams::from(&args);
-            let api: &'static A = ctx.underlying;
+            let api: Arc<A> = ctx.underlying.clone();
             async move {
                 match params {
                     Ok(p) => match api.update_group(&ctx.context, p.into()).await {
@@ -193,7 +193,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
         });
         methods.add_async_method("create_group", |_, ctx, args: Table| {
             let params = CreateGroupParams::from(&args);
-            let api: &'static A = ctx.underlying;
+            let api: Arc<A> = ctx.underlying.clone();
             async move {
                 match params {
                     Ok(p) => match api.create_group(&ctx.context, p.into()).await {
@@ -205,7 +205,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
             }
         });
         methods.add_async_method("delete_group", |_, ctx, group_id: i32| {
-            let api: &'static A = ctx.underlying;
+            let api: Arc<A> = ctx.underlying.clone();
             async move {
                 match api.delete_group(&ctx.context, GroupId(group_id)).await {
                     Ok(()) => Ok(MyLuaResult(Ok(()))),
@@ -217,7 +217,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
         // Users
         //
         methods.add_async_method("get_user_details", |_, ctx, user_id: String| {
-            let api: &'static A = ctx.underlying;
+            let api: Arc<A> = ctx.underlying.clone();
             async move {
                 match api
                     .get_user_details(&ctx.context, UserId::from(user_id))
@@ -233,7 +233,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
         });
         methods.add_async_method("create_user", |_, ctx, args: Table| {
             let params = CreateUserParams::from(&args);
-            let api: &'static A = ctx.underlying;
+            let api: Arc<A> = ctx.underlying.clone();
             async move {
                 match params {
                     Ok(p) => match api.create_user(&ctx.context, p.into()).await {
@@ -246,7 +246,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
         });
         methods.add_async_method("update_user", |_, ctx, args: Table| {
             let params = UpdateUserParams::from(&args);
-            let api: &'static A = ctx.underlying;
+            let api: Arc<A> = ctx.underlying.clone();
             async move {
                 match params {
                     Ok(p) => match api.update_user(&ctx.context, p.into()).await {
@@ -258,7 +258,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
             }
         });
         methods.add_async_method("delete_user", |_, ctx, user_id: String| {
-            let api: &'static A = ctx.underlying;
+            let api: Arc<A> = ctx.underlying.clone();
             async move {
                 match api.delete_user(&ctx.context, UserId::from(user_id)).await {
                     Ok(()) => Ok(MyLuaResult(Ok(()))),
@@ -269,7 +269,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
         methods.add_async_method(
             "add_user_to_group",
             |_, ctx, (user_id, group_id): (String, i32)| {
-                let api: &'static A = ctx.underlying;
+                let api: Arc<A> = ctx.underlying.clone();
                 async move {
                     match api
                         .add_user_to_group(&ctx.context, UserId::from(user_id), GroupId(group_id))
@@ -284,7 +284,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
         methods.add_async_method(
             "remove_user_from_group",
             |_, ctx, (user_id, group_id): (String, i32)| {
-                let api: &'static A = ctx.underlying;
+                let api: Arc<A> = ctx.underlying.clone();
                 async move {
                     match api
                         .remove_user_from_group(
@@ -301,7 +301,7 @@ impl<A: BackendAPI + 'static> UserData for LuaBackendAPI<A> {
             },
         );
         methods.add_async_method("get_user_groups", |_, ctx, user_id: String| {
-            let api: &'static A = ctx.underlying;
+            let api: Arc<A> = ctx.underlying.clone();
             async move {
                 match api
                     .get_user_groups(&ctx.context, UserId::from(user_id))

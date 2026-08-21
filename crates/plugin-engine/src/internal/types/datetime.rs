@@ -1,5 +1,6 @@
 use chrono::{DateTime, NaiveDateTime, TimeZone};
 use mlua::{Error, FromLua, IntoLua, LuaSerdeExt, Result as LuaResult};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Clone, Debug)]
 pub struct LuaDateTime {
@@ -13,7 +14,7 @@ impl From<NaiveDateTime> for LuaDateTime {
 }
 
 pub fn datetime_to_rfc3339(dt: &NaiveDateTime) -> String {
-    let dtutc = chrono::Utc.from_utc_datetime(&dt);
+    let dtutc = chrono::Utc.from_utc_datetime(dt);
     dtutc.to_rfc3339()
 }
 
@@ -25,6 +26,20 @@ pub fn datetime_from_rfc3389(s: String) -> LuaResult<NaiveDateTime> {
             to: "DateTime".to_string(),
             message: Some("Invalid rfc3339 datetime format string".to_string()),
         }),
+    }
+}
+
+impl Serialize for LuaDateTime {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&datetime_to_rfc3339(&self.datetime))
+    }
+}
+
+impl<'de> Deserialize<'de> for LuaDateTime {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        let datetime = datetime_from_rfc3389(s).map_err(serde::de::Error::custom)?;
+        Ok(LuaDateTime { datetime })
     }
 }
 

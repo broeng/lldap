@@ -10,11 +10,15 @@ use crate::{
 use std::sync::Arc;
 use tracing::{debug, warn};
 
-fn load_plugin(plugin_config: &PluginConfig, plugins: &mut PluginRegistry) -> LuaResult<()> {
+fn load_plugin(
+    plugin_config: &PluginConfig,
+    lua: Lua,
+    plugins: &mut PluginRegistry,
+) -> LuaResult<()> {
     // Execute the plugin code and obtain a registration table
     let test_module: Table = match &plugin_config.plugin_source {
-        PluginSource::ScriptFile(p) => plugins.lua.load(p.clone()).eval()?,
-        PluginSource::ScriptSource(s) => plugins.lua.load(s).eval()?,
+        PluginSource::ScriptFile(p) => lua.load(p.clone()).eval()?,
+        PluginSource::ScriptSource(s) => lua.load(s).eval()?,
     };
     // Load metadata from plugin
     let plugin_name: String = test_module.get("name")?;
@@ -25,6 +29,7 @@ fn load_plugin(plugin_config: &PluginConfig, plugins: &mut PluginRegistry) -> Lu
         permissions: plugin_config.permissions.clone(),
         configuration: plugin_config.configuration.clone(),
         kvstore_scope: Scope(plugin_config.kvscope.clone().unwrap_or(plugin_name.clone())),
+        lua,
     };
     debug!(
         "[{}] Loading plugin '{}' version '{}'",
@@ -61,19 +66,16 @@ fn load_plugin(plugin_config: &PluginConfig, plugins: &mut PluginRegistry) -> Lu
             }
         }
     }
+    debug!("Loaded plugin {:#?} by {:#?}", &plugin.name, &plugin.author);
     Ok(())
 }
 
 pub fn load_plugins(plugins: Vec<PluginConfig>) -> LuaResult<PluginRegistry> {
-    let lua = init::new_lua_environment()?;
-    let lua_ref: &'static Lua = Box::leak(Box::new(lua));
-    let mut registry = PluginRegistry::new(lua_ref);
-    plugins.iter().for_each(|p| {
+    let mut registry = PluginRegistry::new();
+    for p in plugins.iter() {
         debug!("Loading plugin: {:#?} ...", p.plugin_source.to_string());
-        match load_plugin(&p, &mut registry) {
-            Ok(_) => {
-                debug!("Loaded plugin: {:#?}", p.plugin_source.to_string());
-            }
+        match load_plugin(p, init::new_lua_environment()?, &mut registry) {
+            Ok(_) => {}
             Err(e) => {
                 warn!(
                     "Failed to load plugin: {:#?}. Ignoring.",
@@ -82,7 +84,7 @@ pub fn load_plugins(plugins: Vec<PluginConfig>) -> LuaResult<PluginRegistry> {
                 warn!("Error: {:#?}", e);
             }
         }
-    });
+    }
     registry.sort_handlers();
     Ok(registry)
 }

@@ -64,7 +64,6 @@ macro_rules! invoke_andthen_mutation_handler {
             exec_mutation_handler(
                 $ctx,
                 $self.kvstore.clone(),
-                &$self.plugin_registry.lua,
                 &$self.plugin_registry.$handler,
                 $fromargt,
             )
@@ -93,7 +92,6 @@ macro_rules! invoke_notification_handler {
             exec_notification_handler(
                 $ctx,
                 $self.kvstore.clone(),
-                &$self.plugin_registry.lua,
                 &$self.plugin_registry.$handler,
                 $fromargt,
             )
@@ -116,12 +114,11 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
                 let plugin_ref: &Plugin = cb.plugin.as_ref();
                 // Prepare actual context for plugin
                 let ctx = LuaPluginContext {
-                    api: context.api,
+                    api: context.api.clone(),
                     configuration: plugin_ref.configuration.clone(),
-                    context: context.request_context.clone(),
+                    context: context.request_context.entering_plugin(&plugin_ref.name),
                     kvstore: self.kvstore.clone(),
                     kvscope: plugin_ref.kvstore_scope.clone(),
-                    lua: self.plugin_registry.lua,
                 };
                 let plugin_name = plugin_ref.name.clone();
                 let span = debug_span!("[Lua Plugin Handler]");
@@ -425,14 +422,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         context: PluginContext<API>,
         args: GroupId,
     ) -> Result<GroupId, String> {
-        invoke_mutation_handler!(
-            self,
-            context,
-            on_get_group_details,
-            args.0,
-            |i| GroupId(i),
-            args
-        )
+        invoke_mutation_handler!(self, context, on_get_group_details, args.0, GroupId, args)
     }
 
     #[instrument(skip(self, context), level = "debug", err)]
@@ -825,7 +815,6 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
             exec_mutation_handler_alt(
                 context,
                 self.kvstore.clone(),
-                &self.plugin_registry.lua,
                 &self.plugin_registry.on_ldap_bind,
                 BindRequestArguments {
                     bind_result,
@@ -869,7 +858,6 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
             exec_mutation_handler_alt(
                 context,
                 self.kvstore.clone(),
-                &self.plugin_registry.lua,
                 &self.plugin_registry.on_ldap_modify,
                 ModifyRequestArguments {
                     modify_result,
@@ -897,7 +885,6 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
             exec_mutation_handler_alt(
                 context,
                 self.kvstore.clone(),
-                &self.plugin_registry.lua,
                 &self.plugin_registry.on_ldap_extended_request,
                 ExtendedRequestArguments {
                     extended_result: result,
@@ -923,7 +910,6 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
             let _ = exec_mutation_handler_alt(
                 context,
                 self.kvstore.clone(),
-                &self.plugin_registry.lua,
                 &self.plugin_registry.on_ldap_password_update,
                 UpdatePasswordArguments {
                     user_id: user_id.into_string(),

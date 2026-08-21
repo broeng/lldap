@@ -1,7 +1,8 @@
 use std::collections::HashSet;
+use std::ops::Deref;
+use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
 use ldap3_proto::{
     LdapSearchResultEntry,
     proto::{LdapBindRequest, LdapExtendedRequest, LdapModifyRequest, LdapOp, LdapSearchRequest},
@@ -35,9 +36,13 @@ use lldap_ldap::{InternalSearchResults, LdapEventHandler, LdapInfo};
 use lldap_opaque_handler::OpaqueHandler;
 use lldap_sql_backend_handler::SqlBackendHandler;
 
-use crate::{domain::plugin::backend::ServerBackendAPI, tcp_backend_handler::TcpBackendHandler};
+use crate::backend::ServerBackendAPI;
 
 use tracing::instrument;
+
+// The API that plugins use. It wraps `PluginBackendHandler`, so that backend
+// calls from a plugin also dispatch plugin events.
+pub type ServerApi<B = SqlBackendHandler> = ServerBackendAPI<PluginBackendHandler<B>>;
 
 macro_rules! wrap_call_with_plugin_callbacks {
     ($self:expr, $req_ctx:expr, $pre_handler:ident, $fn:ident, $post_handler:ident, $param:expr) => {{
@@ -69,36 +74,50 @@ macro_rules! wrap_call_with_plugin_callbacks_mutated_retval {
     }};
 }
 
-#[derive(Clone)]
-pub struct PluginBackendHandler {
-    pub(crate) backend_handler: SqlBackendHandler,
-    pub(crate) backend_api: &'static ServerBackendAPI<SqlBackendHandler>,
-    pub(crate) plugin_handler:
-        PluginHandler<PluginKeyValueStore, ServerBackendAPI<SqlBackendHandler>>,
+pub struct PluginBackendHandlerInner<B: BackendHandler + 'static = SqlBackendHandler> {
+    pub backend_handler: B,
+    pub ldap_info: &'static LdapInfo,
+    pub plugin_handler: PluginHandler<PluginKeyValueStore, ServerApi<B>>,
 }
 
-impl PluginBackendHandler {
+pub struct PluginBackendHandler<B: BackendHandler + 'static = SqlBackendHandler>(
+    Arc<PluginBackendHandlerInner<B>>,
+);
+
+impl<B: BackendHandler + 'static> Clone for PluginBackendHandler<B> {
+    fn clone(&self) -> Self {
+        PluginBackendHandler(Arc::clone(&self.0))
+    }
+}
+
+impl<B: BackendHandler + 'static> Deref for PluginBackendHandler<B> {
+    type Target = PluginBackendHandlerInner<B>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<B: BackendHandler + 'static> PluginBackendHandler<B> {
     pub fn new(
-        backend_handler: &SqlBackendHandler,
-        plugin_handler: PluginHandler<PluginKeyValueStore, ServerBackendAPI<SqlBackendHandler>>,
+        backend_handler: B,
+        plugin_handler: PluginHandler<PluginKeyValueStore, ServerApi<B>>,
         ldap_info: &'static LdapInfo,
     ) -> Self {
-        let api: &'static ServerBackendAPI<SqlBackendHandler> =
-            Box::leak(Box::new(ServerBackendAPI {
-                backend_handler: backend_handler.clone(),
-                ldap_info: ldap_info,
-            }));
-        PluginBackendHandler {
-            backend_handler: backend_handler.clone(),
-            backend_api: api,
-            plugin_handler: plugin_handler,
-        }
+        PluginBackendHandler(Arc::new(PluginBackendHandlerInner {
+            backend_handler,
+            ldap_info,
+            plugin_handler,
+        }))
     }
-    pub fn new_plugin_context(
-        &self,
-        context: &RequestContext,
-    ) -> PluginContext<ServerBackendAPI<SqlBackendHandler>> {
-        PluginContext::new(self.backend_api, context.clone())
+
+    pub fn new_plugin_context(&self, context: &RequestContext) -> PluginContext<ServerApi<B>> {
+        PluginContext::new(
+            Arc::new(ServerBackendAPI {
+                backend_handler: self.clone(),
+                ldap_info: self.ldap_info,
+            }),
+            context.clone(),
+        )
     }
 
     pub async fn initialize_plugins(&self) -> std::result::Result<(), String> {
@@ -108,10 +127,10 @@ impl PluginBackendHandler {
 }
 
 #[async_trait]
-impl BackendHandler for PluginBackendHandler {}
+impl<B: BackendHandler + 'static> BackendHandler for PluginBackendHandler<B> {}
 
 #[async_trait]
-impl ReadSchemaBackendHandler for PluginBackendHandler {
+impl<B: BackendHandler + 'static> ReadSchemaBackendHandler for PluginBackendHandler<B> {
     #[instrument(skip(self), level = "debug", ret, err)]
     async fn get_schema(&self, context: &RequestContext) -> Result<Schema> {
         let schema = self.backend_handler.get_schema(context).await?;
@@ -124,7 +143,7 @@ impl ReadSchemaBackendHandler for PluginBackendHandler {
 }
 
 #[async_trait]
-impl SchemaBackendHandler for PluginBackendHandler {
+impl<B: BackendHandler + 'static> SchemaBackendHandler for PluginBackendHandler<B> {
     #[instrument(skip(self), level = "debug", ret, err)]
     async fn add_user_attribute(
         &self,
@@ -248,7 +267,7 @@ impl SchemaBackendHandler for PluginBackendHandler {
 }
 
 #[async_trait]
-impl GroupBackendHandler for PluginBackendHandler {
+impl<B: BackendHandler + 'static> GroupBackendHandler for PluginBackendHandler<B> {
     #[instrument(skip(self), level = "debug", ret, err)]
     async fn get_group_details(
         &self,
@@ -308,7 +327,7 @@ impl GroupBackendHandler for PluginBackendHandler {
 }
 
 #[async_trait]
-impl GroupListerBackendHandler for PluginBackendHandler {
+impl<B: BackendHandler + 'static> GroupListerBackendHandler for PluginBackendHandler<B> {
     #[instrument(skip(self), level = "debug", ret, err)]
     async fn list_groups(
         &self,
@@ -327,7 +346,7 @@ impl GroupListerBackendHandler for PluginBackendHandler {
 }
 
 #[async_trait]
-impl UserBackendHandler for PluginBackendHandler {
+impl<B: BackendHandler + 'static> UserBackendHandler for PluginBackendHandler<B> {
     #[instrument(skip_all, level = "debug", ret, fields(user_id = ?user_id.as_str()))]
     async fn get_user_details(&self, context: &RequestContext, user_id: UserId) -> Result<User> {
         wrap_call_with_plugin_callbacks_mutated_retval!(
@@ -428,7 +447,7 @@ impl UserBackendHandler for PluginBackendHandler {
 }
 
 #[async_trait]
-impl UserListerBackendHandler for PluginBackendHandler {
+impl<B: BackendHandler + 'static> UserListerBackendHandler for PluginBackendHandler<B> {
     #[instrument(skip(self), level = "debug", ret, err)]
     async fn list_users(
         &self,
@@ -447,14 +466,14 @@ impl UserListerBackendHandler for PluginBackendHandler {
 }
 
 #[async_trait]
-impl LoginHandler for PluginBackendHandler {
+impl<B: BackendHandler + LoginHandler + 'static> LoginHandler for PluginBackendHandler<B> {
     async fn bind(&self, context: &RequestContext, request: BindRequest) -> Result<()> {
         self.backend_handler.bind(context, request).await
     }
 }
 
 #[async_trait]
-impl OpaqueHandler for PluginBackendHandler {
+impl<B: BackendHandler + OpaqueHandler + 'static> OpaqueHandler for PluginBackendHandler<B> {
     async fn login_start(
         &self,
         request: login::ClientLoginStartRequest,
@@ -479,53 +498,7 @@ impl OpaqueHandler for PluginBackendHandler {
 }
 
 #[async_trait]
-impl TcpBackendHandler for PluginBackendHandler {
-    async fn get_jwt_blacklist(&self) -> anyhow::Result<HashSet<u64>> {
-        self.backend_handler.get_jwt_blacklist().await
-    }
-    async fn create_refresh_token(&self, user: &UserId) -> Result<(String, chrono::Duration)> {
-        self.backend_handler.create_refresh_token(user).await
-    }
-    async fn register_jwt(
-        &self,
-        user: &UserId,
-        jwt_hash: u64,
-        expiry_date: NaiveDateTime,
-    ) -> Result<()> {
-        self.backend_handler
-            .register_jwt(user, jwt_hash, expiry_date)
-            .await
-    }
-    async fn check_token(&self, refresh_token_hash: u64, user: &UserId) -> Result<bool> {
-        self.backend_handler
-            .check_token(refresh_token_hash, user)
-            .await
-    }
-    async fn blacklist_jwts(&self, user: &UserId) -> Result<HashSet<u64>> {
-        self.backend_handler.blacklist_jwts(user).await
-    }
-    async fn delete_refresh_token(&self, refresh_token_hash: u64) -> Result<()> {
-        self.backend_handler
-            .delete_refresh_token(refresh_token_hash)
-            .await
-    }
-    async fn start_password_reset(&self, user: &UserId) -> Result<Option<String>> {
-        self.backend_handler.start_password_reset(user).await
-    }
-    async fn get_user_id_for_password_reset_token(&self, token: &str) -> Result<UserId> {
-        self.backend_handler
-            .get_user_id_for_password_reset_token(token)
-            .await
-    }
-    async fn delete_password_reset_token(&self, token: &str) -> Result<()> {
-        self.backend_handler
-            .delete_password_reset_token(token)
-            .await
-    }
-}
-
-#[async_trait]
-impl LdapEventHandler for PluginBackendHandler {
+impl<B: BackendHandler + 'static> LdapEventHandler for PluginBackendHandler<B> {
     #[instrument(skip_all(), level = "debug")]
     async fn on_ldap_bind(
         &self,

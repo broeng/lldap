@@ -15,8 +15,7 @@ impl UserData for LuaTablesLib {
         methods.add_method("empty", |_, _, t: Table| {
             Ok(t.pairs()
                 .collect::<Vec<Result<(Value, Value), Error>>>()
-                .len()
-                == 0)
+                .is_empty())
         });
     }
 }
@@ -41,35 +40,24 @@ fn table_equals(a: &Table, b: &Table) -> LuaResult<bool> {
             if !table_equals(value.as_table().unwrap(), bval.as_table().unwrap())? {
                 return Ok(false);
             }
-        } else {
-            if !value.equals(&bval)? {
-                return Ok(false);
-            }
+        } else if !value.equals(&bval)? {
+            return Ok(false);
         }
     }
     Ok(true)
 }
 
 fn table_has_tree(base: &Table, tree: &Table) -> LuaResult<bool> {
-    let mut result: bool = true;
-    for pair in tree.pairs::<Value, Value>() {
-        let mut elem_result: bool = false;
-        let (key, value) = pair?;
-        if base.contains_key(&key)? {
-            let bval: Value = base.get(key)?;
-            if value.type_name().eq_ignore_ascii_case(bval.type_name()) {
-                if value.is_table() {
-                    elem_result =
-                        table_has_tree(value.as_table().unwrap(), bval.as_table().unwrap())?;
-                } else {
-                    if value.equals(&bval)? {
-                        elem_result = true
-                    }
-                }
-            }
-        }
-        result = result && elem_result;
+    if table_equals(base, tree)? {
+        return Ok(true);
     }
-    // meh
-    Ok(true)
+    for pair in base.pairs::<Value, Value>() {
+        let (_, value) = pair?;
+        if let Some(subtable) = value.as_table()
+            && table_has_tree(subtable, tree)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

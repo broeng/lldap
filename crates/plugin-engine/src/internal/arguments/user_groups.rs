@@ -1,12 +1,14 @@
 use std::collections::HashSet;
 
 use lldap_domain::types::GroupDetails;
-use mlua::{Error, FromLua, IntoLua, Value};
+use mlua::{FromLua, IntoLua, LuaSerdeExt, Value};
+use serde::{Deserialize, Serialize};
 
 use crate::internal::types::group::LuaGroupDetails;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UserGroupsArguments {
+    #[serde(rename = "user_groups")]
     user_groups: Vec<LuaGroupDetails>,
 }
 
@@ -17,9 +19,10 @@ impl From<HashSet<GroupDetails>> for UserGroupsArguments {
         }
     }
 }
-impl Into<HashSet<GroupDetails>> for UserGroupsArguments {
-    fn into(self) -> HashSet<GroupDetails> {
-        self.user_groups
+impl From<UserGroupsArguments> for HashSet<GroupDetails> {
+    fn from(value: UserGroupsArguments) -> Self {
+        value
+            .user_groups
             .into_iter()
             .map(LuaGroupDetails::into)
             .collect()
@@ -28,22 +31,11 @@ impl Into<HashSet<GroupDetails>> for UserGroupsArguments {
 
 impl IntoLua for UserGroupsArguments {
     fn into_lua(self, lua: &mlua::Lua) -> mlua::Result<Value> {
-        let t = lua.create_table()?;
-        t.set("user_groups", self.user_groups)?;
-        Ok(Value::Table(t))
+        lua.to_value(&self)
     }
 }
 impl FromLua for UserGroupsArguments {
-    fn from_lua(value: mlua::Value, _lua: &mlua::Lua) -> mlua::Result<Self> {
-        match value {
-            Value::Table(t) => Ok(UserGroupsArguments {
-                user_groups: t.get("user_groups")?,
-            }),
-            _ => Err(Error::FromLuaConversionError {
-                from: "{unknown}",
-                to: "UserGroupsArguments".to_string(),
-                message: Some("Lua table expected".to_string()),
-            }),
-        }
+    fn from_lua(value: mlua::Value, lua: &mlua::Lua) -> mlua::Result<Self> {
+        lua.from_value(value)
     }
 }

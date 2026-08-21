@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LdapSearchResultEntryArguments {
+    #[serde(rename = "search_result_entry")]
     pub search_result_entry: LdapSearchResultEntry,
 }
 

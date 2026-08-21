@@ -28,8 +28,8 @@ use crate::{
 use actix::Actor;
 use actix_server::ServerBuilder;
 use anyhow::{Context, Result, anyhow, bail};
-use domain::plugin_backend_handler::PluginBackendHandler;
 use futures_util::TryFutureExt;
+use lldap_plugin_backend_handler::handler::PluginBackendHandler;
 use lldap_plugin_kv_store::store::PluginKeyValueStore;
 use lldap_sql_backend_handler::{
     SqlBackendHandler, register_password,
@@ -154,7 +154,7 @@ async fn setup_plugin_handler(
         .plugins
         .iter()
         .filter(|p| p.1.enabled)
-        .map(|p| {
+        .filter_map(|p| {
             match PluginConfig::from_file(
                 p.1.plugin_path.clone(),
                 p.1.kvscope.clone(),
@@ -172,7 +172,6 @@ async fn setup_plugin_handler(
                 }
             }
         })
-        .flatten()
         .collect::<Vec<PluginConfig>>();
     let num_expected_plugins = config.plugins.iter().filter(|p| p.1.enabled).count();
     if plugin_configs.len() != num_expected_plugins {
@@ -186,7 +185,7 @@ async fn setup_plugin_handler(
             let backend_handler =
                 SqlBackendHandler::new(config.get_server_setup().clone(), sql_pool.clone());
             let plugin_backend_handler =
-                PluginBackendHandler::new(&backend_handler, plugin_handler, ldap_info);
+                PluginBackendHandler::new(backend_handler, plugin_handler, ldap_info);
             // Initialize the plugins, ensure they were succesful
             if let Err(e) = plugin_backend_handler.initialize_plugins().await {
                 bail!("A plugin failed to initialize. Exiting. Error: {}", e)

@@ -54,7 +54,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
             Some(f) => match f {
                 QueryFilter::LdapFilter(s) => Some(parse_user_filter(
                     self.get_schema(context).await?,
-                    &self.ldap_info,
+                    self.ldap_info,
                     s,
                 )?),
                 QueryFilter::UserFilter(u) => u.filter,
@@ -88,7 +88,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
             Some(f) => match f {
                 QueryFilter::LdapFilter(s) => Some(parse_group_filter(
                     self.get_schema(context).await?,
-                    &self.ldap_info,
+                    self.ldap_info,
                     s,
                 )?),
                 QueryFilter::GroupFilter(g) => g.filter,

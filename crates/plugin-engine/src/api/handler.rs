@@ -356,7 +356,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI + 'static> PluginHandler<
         Ok(PluginHandler {
             plugin_registry: plugins,
             kvstore,
-            __phantom: PhantomData::default(),
+            __phantom: PhantomData,
         })
     }
 }

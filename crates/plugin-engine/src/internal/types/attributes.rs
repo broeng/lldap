@@ -1,35 +1,10 @@
-use chrono::NaiveDateTime;
-use lldap_domain::types::{Attribute, AttributeName, AttributeValue, Cardinality, JpegPhoto};
-use mlua::{Error, FromLua, IntoLua, Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
+use lldap_domain::types::{AttributeValue, Cardinality, JpegPhoto};
+use mlua::{FromLua, IntoLua, Lua, LuaSerdeExt, Result as LuaResult, Value};
 use serde::{Deserialize, Serialize};
 
-use crate::internal::types::datetime::{datetime_from_rfc3389, datetime_to_rfc3339};
+use crate::internal::types::datetime::LuaDateTime;
 
 #[derive(PartialEq, Eq, Clone, Debug)]
-pub struct LuaAttribute {
-    pub name: AttributeName,
-    pub value: LuaAttributeValue,
-}
-
-impl From<Attribute> for LuaAttribute {
-    fn from(value: Attribute) -> Self {
-        LuaAttribute {
-            name: value.name,
-            value: value.value.into(),
-        }
-    }
-}
-
-impl Into<Attribute> for LuaAttribute {
-    fn into(self) -> Attribute {
-        Attribute {
-            name: self.name,
-            value: self.value.value,
-        }
-    }
-}
-
-#[derive(PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct LuaAttributeValue {
     pub value: AttributeValue,
 }
@@ -40,172 +15,106 @@ impl From<AttributeValue> for LuaAttributeValue {
     }
 }
 
-impl IntoLua for LuaAttributeValue {
-    fn into_lua(self, lua: &Lua) -> mlua::Result<Value> {
-        let t = lua.create_table()?;
-        match self.value {
-            AttributeValue::String(Cardinality::Singleton(s)) => {
-                t.set("string", lua.to_value(&s)?)?;
-            }
-            AttributeValue::String(Cardinality::Unbounded(l)) => {
-                t.set("strings", lua.to_value(&l)?)?;
-            }
-            AttributeValue::Integer(Cardinality::Singleton(i)) => {
-                t.set("int", lua.to_value(&i)?)?;
-            }
-            AttributeValue::Integer(Cardinality::Unbounded(l)) => {
-                t.set("ints", lua.to_value(&l)?)?;
-            }
+// A flat copy of `AttributeValue`, which has two levels of enums. Serde serializes this enum
+// as `{string = "x"}`, which is the shape that plugin scripts use. The serde derive on
+// `AttributeValue` gives `{String = {Singleton = "x"}}`.
+#[derive(Serialize, Deserialize)]
+enum LuaAttributeValueRepr {
+    #[serde(rename = "string")]
+    String(String),
+    #[serde(rename = "strings")]
+    Strings(Vec<String>),
+    #[serde(rename = "int")]
+    Int(i64),
+    #[serde(rename = "ints")]
+    Ints(Vec<i64>),
+    #[serde(rename = "datetime")]
+    DateTime(LuaDateTime),
+    #[serde(rename = "datetimes")]
+    DateTimes(Vec<LuaDateTime>),
+    #[serde(rename = "jpeg_photo")]
+    JpegPhoto(Vec<u8>),
+    #[serde(rename = "jpeg_photos")]
+    JpegPhotos(Vec<Vec<u8>>),
+}
+
+impl From<AttributeValue> for LuaAttributeValueRepr {
+    fn from(value: AttributeValue) -> Self {
+        match value {
+            AttributeValue::String(Cardinality::Singleton(s)) => LuaAttributeValueRepr::String(s),
+            AttributeValue::String(Cardinality::Unbounded(l)) => LuaAttributeValueRepr::Strings(l),
+            AttributeValue::Integer(Cardinality::Singleton(i)) => LuaAttributeValueRepr::Int(i),
+            AttributeValue::Integer(Cardinality::Unbounded(l)) => LuaAttributeValueRepr::Ints(l),
             AttributeValue::DateTime(Cardinality::Singleton(dt)) => {
-                t.set("datetime", lua.to_value(&datetime_to_rfc3339(&dt))?)?;
+                LuaAttributeValueRepr::DateTime(dt.into())
             }
             AttributeValue::DateTime(Cardinality::Unbounded(l)) => {
-                t.set(
-                    "datetimes",
-                    lua.to_value(&l.iter().map(datetime_to_rfc3339).collect::<Vec<_>>())?,
-                )?;
+                LuaAttributeValueRepr::DateTimes(l.into_iter().map(LuaDateTime::from).collect())
             }
             AttributeValue::JpegPhoto(Cardinality::Singleton(p)) => {
-                t.set("jpeg_photo", lua.to_value(&p.clone().into_bytes())?)?;
+                LuaAttributeValueRepr::JpegPhoto(p.into_bytes())
             }
             AttributeValue::JpegPhoto(Cardinality::Unbounded(l)) => {
-                t.set(
-                    "jpeg_photos",
-                    lua.to_value(
-                        &l.clone()
-                            .into_iter()
-                            .map(JpegPhoto::into_bytes)
-                            .collect::<Vec<Vec<_>>>(),
-                    )?,
-                )?;
+                LuaAttributeValueRepr::JpegPhotos(
+                    l.into_iter().map(JpegPhoto::into_bytes).collect(),
+                )
             }
         }
-        Ok(Value::Table(t))
     }
 }
 
-pub fn parse_attribute_value(val: Table) -> LuaResult<AttributeValue> {
-    if val.contains_key("string")? {
-        Ok(AttributeValue::String(Cardinality::Singleton(
-            val.get("string")?,
-        )))
-    } else if val.contains_key("strings")? {
-        Ok(AttributeValue::String(Cardinality::Unbounded(
-            val.get("strings")?,
-        )))
-    } else if val.contains_key("int")? {
-        Ok(AttributeValue::Integer(Cardinality::Singleton(
-            val.get("int")?,
-        )))
-    } else if val.contains_key("ints")? {
-        Ok(AttributeValue::Integer(Cardinality::Unbounded(
-            val.get("ints")?,
-        )))
-    } else if val.contains_key("datetime")? {
-        Ok(AttributeValue::DateTime(Cardinality::Singleton(
-            datetime_from_rfc3389(val.get("datetime")?)?,
-        )))
-    } else if val.contains_key("datetimes")? {
-        let strs: Vec<String> = val.get("datetimes")?;
-        let mut dts: Vec<NaiveDateTime> = Vec::new();
-        for s in strs {
-            dts.push(datetime_from_rfc3389(s)?);
-        }
-        Ok(AttributeValue::DateTime(Cardinality::Unbounded(dts)))
-    } else if val.contains_key("jpeg_photo")? {
-        let v: Vec<u8> = val.get("jpeg_photo")?;
-        Ok(AttributeValue::JpegPhoto(Cardinality::Singleton(
-            JpegPhoto::try_from(v.as_slice()).map_err(|_| Error::FromLuaConversionError {
-                from: "{jpeg_photo}",
-                to: "JpegPhoto".to_string(),
-                message: Some("Invalid jpeg_photo contents".to_string()),
-            })?,
-        )))
-    } else if val.contains_key("jpeg_photos")? {
-        let v: Vec<Vec<u8>> = val.get("jpeg_photos")?;
-        let mut photos: Vec<JpegPhoto> = Vec::new();
-        for bytes in v {
-            photos.push(JpegPhoto::try_from(bytes.as_slice()).map_err(|_| {
-                Error::FromLuaConversionError {
-                    from: "{jpeg_photo}",
-                    to: "JpegPhoto".to_string(),
-                    message: Some("Invalid jpeg_photo contents".to_string()),
+impl TryFrom<LuaAttributeValueRepr> for AttributeValue {
+    type Error = anyhow::Error;
+
+    fn try_from(repr: LuaAttributeValueRepr) -> Result<Self, Self::Error> {
+        Ok(match repr {
+            LuaAttributeValueRepr::String(s) => AttributeValue::String(Cardinality::Singleton(s)),
+            LuaAttributeValueRepr::Strings(l) => AttributeValue::String(Cardinality::Unbounded(l)),
+            LuaAttributeValueRepr::Int(i) => AttributeValue::Integer(Cardinality::Singleton(i)),
+            LuaAttributeValueRepr::Ints(l) => AttributeValue::Integer(Cardinality::Unbounded(l)),
+            LuaAttributeValueRepr::DateTime(dt) => {
+                AttributeValue::DateTime(Cardinality::Singleton(dt.datetime))
+            }
+            LuaAttributeValueRepr::DateTimes(l) => AttributeValue::DateTime(
+                Cardinality::Unbounded(l.into_iter().map(|dt| dt.datetime).collect()),
+            ),
+            LuaAttributeValueRepr::JpegPhoto(bytes) => AttributeValue::JpegPhoto(
+                Cardinality::Singleton(JpegPhoto::try_from(bytes.as_slice())?),
+            ),
+            LuaAttributeValueRepr::JpegPhotos(byte_lists) => {
+                let mut photos = Vec::with_capacity(byte_lists.len());
+                for bytes in byte_lists {
+                    photos.push(JpegPhoto::try_from(bytes.as_slice())?);
                 }
-            })?);
-        }
-        Ok(AttributeValue::JpegPhoto(Cardinality::Unbounded(photos)))
-    } else {
-        Err(Error::FromLuaConversionError {
-            from: "{atribute-value}",
-            to: "AttributeValue".to_string(),
-            message: Some("Unknown attribute value type".to_string()),
+                AttributeValue::JpegPhoto(Cardinality::Unbounded(photos))
+            }
         })
     }
 }
 
-impl FromLua for LuaAttributeValue {
-    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
-        match value {
-            Value::Table(t) => Ok(LuaAttributeValue {
-                value: parse_attribute_value(t)?,
-            }),
-            _ => Err(Error::FromLuaConversionError {
-                from: "{unknown}",
-                to: "AttributeValue".to_string(),
-                message: Some("Lua table expected".to_string()),
-            }),
-        }
+impl Serialize for LuaAttributeValue {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        LuaAttributeValueRepr::from(self.value.clone()).serialize(serializer)
     }
 }
 
-impl FromLua for LuaAttribute {
-    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
-        match value {
-            Value::Table(t) => Ok(LuaAttribute {
-                name: t.get::<String>("name")?.into(),
-                value: t.get("value")?,
-            }),
-            _ => Err(Error::FromLuaConversionError {
-                from: "{unknown}",
-                to: "Attribute".to_string(),
-                message: Some("Lua table expected".to_string()),
-            }),
-        }
+impl<'de> Deserialize<'de> for LuaAttributeValue {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let repr = LuaAttributeValueRepr::deserialize(deserializer)?;
+        Ok(LuaAttributeValue {
+            value: AttributeValue::try_from(repr).map_err(serde::de::Error::custom)?,
+        })
     }
 }
 
-impl IntoLua for LuaAttribute {
+impl IntoLua for LuaAttributeValue {
     fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
-        let t = lua.create_table()?;
-        t.set("name", lua.to_value(&self.name.into_string())?)?;
-        t.set("value", lua.to_value(&self.value)?)?;
-        Ok(Value::Table(t))
+        lua.to_value(&self)
     }
 }
 
-#[cfg(test)]
-mod tests {
-
-    /*
-    use lldap_domain::types::Attribute;
-    use mlua::{Lua, LuaSerdeExt};
-
-    use super::LuaAttribute;
-    #[test]
-    fn test_attribute_roundtrip() {
-        // Setup
-        let lua: Lua = Lua::new();
-        let source_attr = Attribute {
-            name: "SourceAttr".into(),
-            value: "string-val".into(),
-        };
-        let lua_source_attr: LuaAttribute = source_attr.clone().into();
-        // Exercise
-        let lua_val: mlua::Value = lua.to_value(&lua_source_attr).unwrap();
-        assert!(lua_val.as_table().is_some());
-        let lua_final_attr: LuaAttribute = lua.from_value(lua_val).unwrap();
-        let final_attr: Attribute = lua_final_attr.into();
-        // Verify
-        assert_eq!(&source_attr, &final_attr);
-    }*/
+impl FromLua for LuaAttributeValue {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
+        lua.from_value(value)
+    }
 }

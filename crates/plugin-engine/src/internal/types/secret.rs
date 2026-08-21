@@ -27,8 +27,9 @@ impl Secret {
     }
 
     pub fn try_from_modify_request(modify_request: &LdapModifyRequest) -> Option<Secret> {
-        match (&modify_request.changes)
-            .into_iter()
+        match modify_request
+            .changes
+            .iter()
             .find(|c| c.modification.atype.eq_ignore_ascii_case(USER_PASS_KEY))
         {
             Some(change) => {

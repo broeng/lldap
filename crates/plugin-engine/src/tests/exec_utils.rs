@@ -16,25 +16,11 @@ use crate::{
     },
 };
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::sync::Arc;
 
 pub async fn new_memory_store() -> PluginKeyValueStore {
     let dbconn = load_fixture().await;
     PluginKeyValueStore::new(dbconn)
-}
-
-pub fn plugin_config_from_file(path: &str) -> PluginConfig {
-    let path = PathBuf::from(path);
-    PluginConfig::from_file(
-        path,
-        Some("default".to_string()),
-        Permissions {
-            secrets: SecretPermissions::AllowAnyHash,
-        },
-        BTreeMap::new(),
-        100,
-    )
-    .unwrap()
 }
 
 pub fn plugin_config_from_str(source: String) -> PluginConfig {
@@ -52,10 +38,7 @@ pub fn plugin_config_from_str(source: String) -> PluginConfig {
 pub fn new_context_from(
     request_context: RequestContext,
 ) -> PluginContext<MockTestServerBackendAPI> {
-    // this will leak in tests, in actual use there will be a single instance.
-    let api: &'static MockTestServerBackendAPI =
-        Box::leak(Box::new(MockTestServerBackendAPI::new()));
-    PluginContext::new(api, request_context)
+    PluginContext::new(Arc::new(MockTestServerBackendAPI::new()), request_context)
 }
 
 pub fn new_admin_context() -> PluginContext<MockTestServerBackendAPI> {

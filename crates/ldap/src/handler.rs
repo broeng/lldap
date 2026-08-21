@@ -222,8 +222,8 @@ impl<Backend: BackendHandler + LoginHandler + OpaqueHandler, Events: LdapEventHa
         let bind_result = self
             .event_handler
             .on_ldap_bind(
-                &context,
-                &request,
+                context,
+                request,
                 BindResult {
                     result_code: code,
                     message,

@@ -1,12 +1,14 @@
 use crate::{
     api::{backend::BackendAPI, types::PluginContext},
     internal::{
-        context::plugin_context::LuaPluginContext, types::plugins::Callback,
+        context::plugin_context::LuaPluginContext,
+        reentrancy::{exceeds_max_depth, is_calling_plugin},
+        types::plugins::Callback,
         types::result::MyLuaResult,
     },
 };
 use lldap_key_value_store::api::store::KeyValueStore;
-use mlua::{FromLua, FromLuaMulti, IntoLua, Lua};
+use mlua::{FromLua, FromLuaMulti, IntoLua};
 
 use tracing::{Instrument, debug, debug_span, error};
 
@@ -25,25 +27,26 @@ pub async fn exec_mutation_handler<
 >(
     context: PluginContext<A>,
     kvstore: KVStore,
-    lua: &'static Lua,
-    handlers: &Vec<Callback>,
+    handlers: &[Callback],
     args: T,
 ) -> Result<T, String> {
-    if handlers.is_empty() {
+    if handlers.is_empty() || exceeds_max_depth(&context.request_context) {
         Ok(args)
     } else {
         let mut a = args;
         for cb in handlers.iter() {
             // Obtain reference to plugin being executed
             let plugin_ref: &Plugin = cb.plugin.as_ref();
+            if is_calling_plugin(&context.request_context, plugin_ref) {
+                continue;
+            }
             // Prepare actual context for plugin
             let ctx = LuaPluginContext {
-                api: context.api,
+                api: context.api.clone(),
                 configuration: plugin_ref.configuration.clone(),
-                context: context.request_context.clone(),
+                context: context.request_context.entering_plugin(&plugin_ref.name),
                 kvstore: kvstore.clone(),
                 kvscope: plugin_ref.kvstore_scope.clone(),
-                lua,
             };
             let plugin_name = plugin_ref.name.clone();
             let span = debug_span!("[Lua Plugin Handler]");
@@ -59,7 +62,8 @@ pub async fn exec_mutation_handler<
             match exec_res {
                 Ok(res) => {
                     let decode_res: Result<MyLuaResult<T>, String> =
-                        FromLuaMulti::from_lua_multi(res, lua).map_err(|e| e.to_string());
+                        FromLuaMulti::from_lua_multi(res, &plugin_ref.lua)
+                            .map_err(|e| e.to_string());
                     match decode_res {
                         Ok(plugin_res) => match plugin_res.0 {
                             Ok(v) => {
@@ -98,27 +102,28 @@ pub async fn exec_mutation_handler_alt<
 >(
     context: PluginContext<A>,
     kvstore: KVStore,
-    lua: &'static Lua,
-    handlers: &Vec<Callback>,
+    handlers: &[Callback],
     args: T,
     extra_args: U,
     mutate_extra: fn(&U, &Plugin) -> U,
 ) -> Result<T, String> {
-    if handlers.is_empty() {
+    if handlers.is_empty() || exceeds_max_depth(&context.request_context) {
         Ok(args)
     } else {
         let mut a = args;
         for cb in handlers.iter() {
             // Obtain reference to plugin being executed
             let plugin_ref: &Plugin = cb.plugin.as_ref();
+            if is_calling_plugin(&context.request_context, plugin_ref) {
+                continue;
+            }
             // Prepare actual context for plugin
             let ctx = LuaPluginContext {
-                api: context.api,
+                api: context.api.clone(),
                 configuration: plugin_ref.configuration.clone(),
-                context: context.request_context.clone(),
+                context: context.request_context.entering_plugin(&plugin_ref.name),
                 kvstore: kvstore.clone(),
                 kvscope: plugin_ref.kvstore_scope.clone(),
-                lua,
             };
             let plugin_name = plugin_ref.name.clone();
             let span = debug_span!("[Lua Plugin Handler]");
@@ -138,7 +143,8 @@ pub async fn exec_mutation_handler_alt<
             match exec_res {
                 Ok(res) => {
                     let decode_res: Result<MyLuaResult<T>, String> =
-                        FromLuaMulti::from_lua_multi(res, lua).map_err(|e| e.to_string());
+                        FromLuaMulti::from_lua_multi(res, &plugin_ref.lua)
+                            .map_err(|e| e.to_string());
                     match decode_res {
                         Ok(plugin_res) => match plugin_res.0 {
                             Ok(v) => {
@@ -175,22 +181,23 @@ pub async fn exec_notification_handler<
 >(
     context: PluginContext<A>,
     kvstore: KVStore,
-    lua: &'static Lua,
-    handlers: &Vec<Callback>,
+    handlers: &[Callback],
     args: T,
 ) -> Result<(), String> {
-    if !handlers.is_empty() {
+    if !handlers.is_empty() && !exceeds_max_depth(&context.request_context) {
         for cb in handlers.iter() {
             // Obtain reference to plugin being executed
             let plugin_ref: &Plugin = cb.plugin.as_ref();
+            if is_calling_plugin(&context.request_context, plugin_ref) {
+                continue;
+            }
             // Prepare actual context for plugin
             let ctx = LuaPluginContext {
-                api: context.api,
+                api: context.api.clone(),
                 configuration: plugin_ref.configuration.clone(),
-                context: context.request_context.clone(),
+                context: context.request_context.entering_plugin(&plugin_ref.name),
                 kvstore: kvstore.clone(),
                 kvscope: plugin_ref.kvstore_scope.clone(),
-                lua,
             };
             let plugin_name = plugin_ref.name.clone();
             let span = debug_span!("[Lua Plugin Handler]");

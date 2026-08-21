@@ -16,16 +16,16 @@ impl UserData for LuaHashingLib {
         // Hashing utilities
         //
         methods.add_method("md4_hash_bytes", |_, _, btable: Table| {
-            Ok(hash_bytes::<Md4>(&btable)?)
+            hash_bytes::<Md4>(&btable)
         });
         methods.add_method("md5_hash_bytes", |_, _, btable: Table| {
-            Ok(hash_bytes::<Md5>(&btable)?)
+            hash_bytes::<Md5>(&btable)
         });
         methods.add_method("sha256_hash_bytes", |_, _, btable: Table| {
-            Ok(hash_bytes::<Sha256>(&btable)?)
+            hash_bytes::<Sha256>(&btable)
         });
         methods.add_method("sha512_hash_bytes", |_, _, btable: Table| {
-            Ok(hash_bytes::<Sha512>(&btable)?)
+            hash_bytes::<Sha512>(&btable)
         });
     }
 }

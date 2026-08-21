@@ -6,7 +6,9 @@ use lldap_domain::types::{GroupId, UserId};
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct UserAndGroupArguments {
+    #[serde(rename = "user_id")]
     pub user_id: String,
+    #[serde(rename = "group_id")]
     pub group_id: i32,
 }
 
@@ -25,19 +27,19 @@ impl From<AddUserToGroupRequest> for UserAndGroupArguments {
     }
 }
 
-impl Into<AddUserToGroupRequest> for UserAndGroupArguments {
-    fn into(self) -> AddUserToGroupRequest {
+impl From<UserAndGroupArguments> for AddUserToGroupRequest {
+    fn from(value: UserAndGroupArguments) -> Self {
         AddUserToGroupRequest {
-            user_id: UserId::from(&self.user_id),
-            group_id: GroupId(self.group_id),
+            user_id: UserId::from(&value.user_id),
+            group_id: GroupId(value.group_id),
         }
     }
 }
-impl Into<RemoveUserFromGroupRequest> for UserAndGroupArguments {
-    fn into(self) -> RemoveUserFromGroupRequest {
+impl From<UserAndGroupArguments> for RemoveUserFromGroupRequest {
+    fn from(value: UserAndGroupArguments) -> Self {
         RemoveUserFromGroupRequest {
-            user_id: UserId::from(&self.user_id),
-            group_id: GroupId(self.group_id),
+            user_id: UserId::from(&value.user_id),
+            group_id: GroupId(value.group_id),
         }
     }
 }

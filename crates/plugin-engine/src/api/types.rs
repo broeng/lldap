@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use crate::api::{backend::BackendAPI, permissions::Permissions};
 use lldap_domain_handlers::{
@@ -27,7 +31,7 @@ impl PluginSource {
         }
     }
 
-    fn is_lua(path: &PathBuf) -> bool {
+    fn is_lua(path: &Path) -> bool {
         path.is_file()
             && path
                 .extension()
@@ -43,7 +47,7 @@ impl std::fmt::Display for PluginSource {
                 write!(
                     f,
                     "{}",
-                    p.file_name().map(|f| f.to_str()).flatten().unwrap_or("n/a")
+                    p.file_name().and_then(|f| f.to_str()).unwrap_or("n/a")
                 )
             }
             PluginSource::ScriptSource(s) => {
@@ -81,12 +85,12 @@ impl PluginConfig {
 
 #[derive(Clone)]
 pub struct PluginContext<A: BackendAPI + 'static> {
-    pub api: &'static A,
+    pub api: Arc<A>,
     pub request_context: RequestContext,
 }
 
 impl<A: BackendAPI> PluginContext<A> {
-    pub fn new(api: &'static A, request_context: RequestContext) -> Self {
+    pub fn new(api: Arc<A>, request_context: RequestContext) -> Self {
         PluginContext {
             api,
             request_context,

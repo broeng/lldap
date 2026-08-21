@@ -1,16 +1,21 @@
 use crate::internal::types::datetime::LuaDateTime;
-use lldap_domain::types::{Group, GroupDetails, GroupId, GroupName, UserId, Uuid};
-use mlua::{Error, FromLua, IntoLua, Lua, LuaSerdeExt, Result as LuaResult, Value};
+use lldap_domain::types::{Attribute, Group, GroupDetails, GroupId, GroupName, UserId, Uuid};
+use mlua::{FromLua, IntoLua, Lua, LuaSerdeExt, Result as LuaResult, Value};
+use serde::{Deserialize, Serialize};
 
-use crate::internal::types::attribute_map::AttributeMapArgument;
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LuaGroupDetails {
+    #[serde(rename = "group_id")]
     pub group_id: i32,
+    #[serde(rename = "display_name")]
     pub display_name: String,
+    #[serde(rename = "creation_date")]
     pub creation_date: LuaDateTime,
+    #[serde(rename = "uuid")]
     pub uuid: String,
-    pub attributes: AttributeMapArgument,
+    #[serde(rename = "attributes", with = "crate::internal::types::attribute_map")]
+    pub attributes: Vec<Attribute>,
+    #[serde(rename = "modified_date")]
     pub modified_date: LuaDateTime,
 }
 
@@ -21,66 +26,52 @@ impl From<GroupDetails> for LuaGroupDetails {
             display_name: g.display_name.into_string(),
             creation_date: g.creation_date.into(),
             uuid: g.uuid.into_string(),
-            attributes: AttributeMapArgument(g.attributes),
+            attributes: g.attributes,
             modified_date: g.modified_date.into(),
         }
     }
 }
 
-impl Into<GroupDetails> for LuaGroupDetails {
-    fn into(self) -> GroupDetails {
+impl From<LuaGroupDetails> for GroupDetails {
+    fn from(value: LuaGroupDetails) -> Self {
         GroupDetails {
-            group_id: GroupId(self.group_id),
-            display_name: GroupName::from(self.display_name),
-            creation_date: self.creation_date.datetime,
-            uuid: Uuid::try_from(self.uuid.as_str()).unwrap(),
-            attributes: self.attributes.0,
-            modified_date: self.modified_date.datetime,
+            group_id: GroupId(value.group_id),
+            display_name: GroupName::from(value.display_name),
+            creation_date: value.creation_date.datetime,
+            uuid: Uuid::try_from(value.uuid.as_str()).unwrap(),
+            attributes: value.attributes,
+            modified_date: value.modified_date.datetime,
         }
     }
 }
 
 impl IntoLua for LuaGroupDetails {
     fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
-        let t = lua.create_table()?;
-        t.set("group_id", lua.to_value(&self.group_id)?)?;
-        t.set("display_name", lua.to_value(&self.display_name)?)?;
-        t.set("creation_date", self.creation_date)?;
-        t.set("uuid", lua.to_value(&self.uuid)?)?;
-        t.set("attributes", self.attributes)?;
-        t.set("modified_date", self.modified_date)?;
-        Ok(Value::Table(t))
+        lua.to_value(&self)
     }
 }
 
 impl FromLua for LuaGroupDetails {
-    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
-        match value {
-            Value::Table(t) => Ok(LuaGroupDetails {
-                group_id: t.get("group_id")?,
-                display_name: t.get("display_name")?,
-                creation_date: t.get("creation_date")?,
-                uuid: t.get("uuid")?,
-                attributes: t.get("attributes")?,
-                modified_date: t.get("modified_date")?,
-            }),
-            _ => Err(Error::FromLuaConversionError {
-                from: "{unknown}",
-                to: "LuaGroupDetails".to_string(),
-                message: Some("Lua table expected".to_string()),
-            }),
-        }
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
+        lua.from_value(value)
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LuaGroup {
+    #[serde(rename = "group_id")]
     pub group_id: i32,
+    #[serde(rename = "display_name")]
     pub display_name: String,
+    #[serde(rename = "creation_date")]
     pub creation_date: LuaDateTime,
+    #[serde(rename = "uuid")]
     pub uuid: String,
+    #[serde(rename = "users")]
     pub users: Vec<String>,
-    pub attributes: AttributeMapArgument,
+    #[serde(rename = "attributes", with = "crate::internal::types::attribute_map")]
+    pub attributes: Vec<Attribute>,
+    #[serde(rename = "modified_date")]
     pub modified_date: LuaDateTime,
 }
 
@@ -94,7 +85,7 @@ impl From<Group> for LuaGroup {
             },
             uuid: g.uuid.into_string(),
             users: g.users.into_iter().map(UserId::into_string).collect(),
-            attributes: AttributeMapArgument(g.attributes),
+            attributes: g.attributes,
             modified_date: LuaDateTime {
                 datetime: g.modified_date,
             },
@@ -102,57 +93,35 @@ impl From<Group> for LuaGroup {
     }
 }
 
-impl Into<Group> for LuaGroup {
-    fn into(self) -> Group {
+impl From<LuaGroup> for Group {
+    fn from(value: LuaGroup) -> Self {
         Group {
-            id: GroupId(self.group_id),
-            display_name: GroupName::from(self.display_name),
-            creation_date: self.creation_date.datetime,
-            uuid: Uuid::try_from(self.uuid.as_str()).unwrap(),
-            users: self.users.into_iter().map(UserId::from).collect(),
-            attributes: self.attributes.0,
-            modified_date: self.modified_date.datetime,
+            id: GroupId(value.group_id),
+            display_name: GroupName::from(value.display_name),
+            creation_date: value.creation_date.datetime,
+            uuid: Uuid::try_from(value.uuid.as_str()).unwrap(),
+            users: value.users.into_iter().map(UserId::from).collect(),
+            attributes: value.attributes,
+            modified_date: value.modified_date.datetime,
         }
     }
 }
 
 impl IntoLua for LuaGroup {
     fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
-        let t = lua.create_table()?;
-        t.set("group_id", lua.to_value(&self.group_id)?)?;
-        t.set("display_name", lua.to_value(&self.display_name)?)?;
-        t.set("creation_date", self.creation_date)?;
-        t.set("uuid", lua.to_value(&self.uuid)?)?;
-        t.set("users", lua.to_value(&self.users)?)?;
-        t.set("attributes", self.attributes)?;
-        t.set("modified_date", self.modified_date)?;
-        Ok(Value::Table(t))
+        lua.to_value(&self)
     }
 }
 
 impl FromLua for LuaGroup {
-    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
-        match value {
-            Value::Table(t) => Ok(LuaGroup {
-                group_id: t.get("group_id")?,
-                display_name: t.get("display_name")?,
-                creation_date: t.get("creation_date")?,
-                uuid: t.get("uuid")?,
-                users: t.get("users")?,
-                attributes: t.get("attributes")?,
-                modified_date: t.get("creation_date")?,
-            }),
-            _ => Err(Error::FromLuaConversionError {
-                from: "{unknown}",
-                to: "LuaGroup".to_string(),
-                message: Some("Lua table expected".to_string()),
-            }),
-        }
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
+        lua.from_value(value)
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LuaGroupsVec {
+    #[serde(rename = "groups")]
     pub groups: Vec<LuaGroup>,
 }
 
@@ -163,30 +132,19 @@ impl From<Vec<Group>> for LuaGroupsVec {
         }
     }
 }
-impl Into<Vec<Group>> for LuaGroupsVec {
-    fn into(self) -> Vec<Group> {
-        self.groups.into_iter().map(LuaGroup::into).collect()
+impl From<LuaGroupsVec> for Vec<Group> {
+    fn from(value: LuaGroupsVec) -> Self {
+        value.groups.into_iter().map(LuaGroup::into).collect()
     }
 }
 
 impl FromLua for LuaGroupsVec {
-    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
-        match value {
-            Value::Table(t) => Ok(LuaGroupsVec {
-                groups: t.get("groups")?,
-            }),
-            _ => Err(Error::FromLuaConversionError {
-                from: "{unknown}",
-                to: "LuaGroupsVec".to_string(),
-                message: Some("Lua table expected".to_string()),
-            }),
-        }
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
+        lua.from_value(value)
     }
 }
 impl IntoLua for LuaGroupsVec {
     fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
-        let t = lua.create_table()?;
-        t.set("groups", self.groups)?;
-        Ok(Value::Table(t))
+        lua.to_value(&self)
     }
 }

@@ -440,7 +440,7 @@ impl UserBackendHandler for SqlBackendHandler {
                 Box::pin(async move {
                     let new_membership = model::memberships::ActiveModel {
                         user_id: ActiveValue::Set(user_id),
-                        group_id: ActiveValue::Set(request.group_id.clone()),
+                        group_id: ActiveValue::Set(request.group_id),
                     };
                     new_membership.insert(transaction).await?;
 
@@ -467,11 +467,11 @@ impl UserBackendHandler for SqlBackendHandler {
         request: RemoveUserFromGroupRequest,
     ) -> Result<()> {
         let user_id = request.user_id.clone();
-        let group_id = request.group_id.clone();
+        let group_id = request.group_id;
         self.sql_pool
             .transaction::<_, _, sea_orm::DbErr>(|transaction| {
                 Box::pin(async move {
-                    let res = model::Membership::delete_by_id((user_id.clone(), group_id.clone()))
+                    let res = model::Membership::delete_by_id((user_id.clone(), group_id))
                         .exec(transaction)
                         .await?;
                     if res.rows_affected == 0 {

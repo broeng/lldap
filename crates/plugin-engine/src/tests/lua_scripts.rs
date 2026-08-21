@@ -1,4 +1,4 @@
-pub const SCRIPT_TEST_LIB: &'static str = r#"
+pub const SCRIPT_TEST_LIB: &str = r#"
     local assert_eq = function(a, b)
         if type(a) ~= type(b) then
             error(type(a) .. " is not a type " .. type(b))
