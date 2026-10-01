@@ -127,6 +127,25 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[tokio::test]
+    async fn test_delete_not_lowercase_dn() {
+        let context = RequestContext::admin("test");
+        let mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
+        assert_eq!(
+            ldap_handler
+                .delete_user_or_group(&context, "uid=Bob,ou=people,dc=example,dc=com".to_owned())
+                .await,
+            Err(LdapError {
+                code: LdapResultCode::InvalidDNSyntax,
+                message:
+                    r#"Distinguished name is not lowercase: "uid=Bob,ou=people,dc=example,dc=com""#
+                        .to_string(),
+            })
+        );
+    }
+
+    #[tokio::test]
     async fn test_delete_user() {
         let context = RequestContext::admin("test");
         let mut mock = MockTestBackendHandler::new();

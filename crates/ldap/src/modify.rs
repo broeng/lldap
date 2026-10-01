@@ -207,6 +207,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_modify_not_lowercase_dn() {
+        let context = RequestContext::empty();
+        let mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
+        let request = make_password_modify_request("Bob");
+        assert_eq!(
+            ldap_handler.do_modify_request(&context, &request).await,
+            make_modify_failure_response(
+                LdapResultCode::InvalidDNSyntax,
+                r#"Invalid username: Distinguished name is not lowercase: "uid=Bob,ou=people,dc=example,dc=com""#
+            )
+        );
+    }
+
+    #[tokio::test]
     async fn test_modify_password_of_regular_as_admin() {
         let context = RequestContext::empty();
         let mut mock = MockTestBackendHandler::new();

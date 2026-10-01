@@ -345,6 +345,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_create_not_lowercase_dn() {
+        let context = RequestContext::empty();
+        let mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
+        let request = LdapAddRequest {
+            dn: "uid=Bob,ou=people,dc=example,dc=com".to_owned(),
+            attributes: Vec::new(),
+        };
+        assert_eq!(
+            ldap_handler.create_user_or_group(&context, request).await,
+            Err(LdapError {
+                code: LdapResultCode::InvalidDNSyntax,
+                message:
+                    r#"Distinguished name is not lowercase: "uid=Bob,ou=people,dc=example,dc=com""#
+                        .to_string(),
+            })
+        );
+    }
+
+    #[tokio::test]
     async fn test_create_user_with_schema_attributes() {
         let context = RequestContext::empty();
         let mut mock = MockTestBackendHandler::new();
