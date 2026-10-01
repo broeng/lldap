@@ -12,6 +12,7 @@ pub async fn create_plugin_kv_table(transaction: &DatabaseTransaction) -> Result
             builder.build(
                 Table::create()
                     .table(PluginKeyValues::Table)
+                    .if_not_exists()
                     .col(
                         ColumnDef::new(PluginKeyValues::PluginKeyScope)
                             .string_len(255)
