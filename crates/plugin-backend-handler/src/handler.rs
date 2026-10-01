@@ -131,7 +131,7 @@ impl<B: BackendHandler + 'static> BackendHandler for PluginBackendHandler<B> {}
 
 #[async_trait]
 impl<B: BackendHandler + 'static> ReadSchemaBackendHandler for PluginBackendHandler<B> {
-    #[instrument(skip(self), level = "debug", ret, err)]
+    #[instrument(skip_all, level = "debug", err)]
     async fn get_schema(&self, context: &RequestContext) -> Result<Schema> {
         let schema = self.backend_handler.get_schema(context).await?;
         let ctx = self.new_plugin_context(context);
@@ -144,7 +144,7 @@ impl<B: BackendHandler + 'static> ReadSchemaBackendHandler for PluginBackendHand
 
 #[async_trait]
 impl<B: BackendHandler + 'static> SchemaBackendHandler for PluginBackendHandler<B> {
-    #[instrument(skip(self), level = "debug", ret, err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?request.name.as_str()))]
     async fn add_user_attribute(
         &self,
         context: &RequestContext,
@@ -159,7 +159,7 @@ impl<B: BackendHandler + 'static> SchemaBackendHandler for PluginBackendHandler<
             request
         )
     }
-    #[instrument(skip(self), level = "debug", ret, err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?request.name.as_str()))]
     async fn add_group_attribute(
         &self,
         context: &RequestContext,
@@ -174,7 +174,7 @@ impl<B: BackendHandler + 'static> SchemaBackendHandler for PluginBackendHandler<
             request
         )
     }
-    #[instrument(skip(self), level = "debug", ret, err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?name.as_str()))]
     async fn delete_user_attribute(
         &self,
         context: &RequestContext,
@@ -189,7 +189,7 @@ impl<B: BackendHandler + 'static> SchemaBackendHandler for PluginBackendHandler<
             name
         )
     }
-    #[instrument(skip(self), level = "debug", ret, err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?name.as_str()))]
     async fn delete_group_attribute(
         &self,
         context: &RequestContext,
@@ -204,7 +204,7 @@ impl<B: BackendHandler + 'static> SchemaBackendHandler for PluginBackendHandler<
             name
         )
     }
-    #[instrument(skip(self), level = "debug", ret, err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?name.as_str()))]
     async fn add_user_object_class(
         &self,
         context: &RequestContext,
@@ -219,7 +219,7 @@ impl<B: BackendHandler + 'static> SchemaBackendHandler for PluginBackendHandler<
             name
         )
     }
-    #[instrument(skip(self), level = "debug", ret, err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?name.as_str()))]
     async fn add_group_object_class(
         &self,
         context: &RequestContext,
@@ -234,7 +234,7 @@ impl<B: BackendHandler + 'static> SchemaBackendHandler for PluginBackendHandler<
             name
         )
     }
-    #[instrument(skip(self), level = "debug", ret, err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?name.as_str()))]
     async fn delete_user_object_class(
         &self,
         context: &RequestContext,
@@ -249,7 +249,7 @@ impl<B: BackendHandler + 'static> SchemaBackendHandler for PluginBackendHandler<
             name
         )
     }
-    #[instrument(skip(self), level = "debug", ret, err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?name.as_str()))]
     async fn delete_group_object_class(
         &self,
         context: &RequestContext,
@@ -268,7 +268,7 @@ impl<B: BackendHandler + 'static> SchemaBackendHandler for PluginBackendHandler<
 
 #[async_trait]
 impl<B: BackendHandler + 'static> GroupBackendHandler for PluginBackendHandler<B> {
-    #[instrument(skip(self), level = "debug", ret, err)]
+    #[instrument(skip_all, level = "debug", err, fields(group_id = ?group_id))]
     async fn get_group_details(
         &self,
         context: &RequestContext,
@@ -283,7 +283,7 @@ impl<B: BackendHandler + 'static> GroupBackendHandler for PluginBackendHandler<B
             group_id
         )
     }
-    #[instrument(skip(self), level = "debug", ret, err)]
+    #[instrument(skip_all, level = "debug", err, fields(group_id = ?request.group_id))]
     async fn update_group(
         &self,
         context: &RequestContext,
@@ -298,7 +298,7 @@ impl<B: BackendHandler + 'static> GroupBackendHandler for PluginBackendHandler<B
             request
         )
     }
-    #[instrument(skip(self), level = "debug", ret, err)]
+    #[instrument(skip_all, level = "debug", err, fields(display_name = ?request.display_name.as_str()))]
     async fn create_group(
         &self,
         context: &RequestContext,
@@ -313,7 +313,7 @@ impl<B: BackendHandler + 'static> GroupBackendHandler for PluginBackendHandler<B
             request
         )
     }
-    #[instrument(skip(self), level = "debug", ret, err)]
+    #[instrument(skip_all, level = "debug", err, fields(group_id = ?group_id))]
     async fn delete_group(&self, context: &RequestContext, group_id: GroupId) -> Result<()> {
         wrap_call_with_plugin_callbacks!(
             self,
@@ -328,7 +328,7 @@ impl<B: BackendHandler + 'static> GroupBackendHandler for PluginBackendHandler<B
 
 #[async_trait]
 impl<B: BackendHandler + 'static> GroupListerBackendHandler for PluginBackendHandler<B> {
-    #[instrument(skip(self), level = "debug", ret, err)]
+    #[instrument(skip_all, level = "debug", err)]
     async fn list_groups(
         &self,
         context: &RequestContext,
@@ -347,7 +347,7 @@ impl<B: BackendHandler + 'static> GroupListerBackendHandler for PluginBackendHan
 
 #[async_trait]
 impl<B: BackendHandler + 'static> UserBackendHandler for PluginBackendHandler<B> {
-    #[instrument(skip_all, level = "debug", ret, fields(user_id = ?user_id.as_str()))]
+    #[instrument(skip_all, level = "debug", err(level = "debug"), fields(user_id = ?user_id.as_str()))]
     async fn get_user_details(&self, context: &RequestContext, user_id: UserId) -> Result<User> {
         wrap_call_with_plugin_callbacks_mutated_retval!(
             self,
@@ -358,7 +358,7 @@ impl<B: BackendHandler + 'static> UserBackendHandler for PluginBackendHandler<B>
             user_id
         )
     }
-    #[instrument(skip(self), level = "debug", err, fields(user_id = ?request.user_id.as_str()))]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?request.user_id.as_str()))]
     async fn create_user(
         &self,
         context: &RequestContext,
@@ -373,7 +373,7 @@ impl<B: BackendHandler + 'static> UserBackendHandler for PluginBackendHandler<B>
             request
         )
     }
-    #[instrument(skip(self), level = "debug", err, fields(user_id = ?request.user_id.as_str()))]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?request.user_id.as_str()))]
     async fn update_user(
         &self,
         context: &RequestContext,
@@ -429,7 +429,7 @@ impl<B: BackendHandler + 'static> UserBackendHandler for PluginBackendHandler<B>
             request
         )
     }
-    #[instrument(skip_all, level = "debug", ret, fields(user_id = ?user_id.as_str()))]
+    #[instrument(skip_all, level = "debug", err(level = "debug"), fields(user_id = ?user_id.as_str()))]
     async fn get_user_groups(
         &self,
         context: &RequestContext,
@@ -448,7 +448,7 @@ impl<B: BackendHandler + 'static> UserBackendHandler for PluginBackendHandler<B>
 
 #[async_trait]
 impl<B: BackendHandler + 'static> UserListerBackendHandler for PluginBackendHandler<B> {
-    #[instrument(skip(self), level = "debug", ret, err)]
+    #[instrument(skip_all, level = "debug", err)]
     async fn list_users(
         &self,
         context: &RequestContext,
@@ -499,7 +499,7 @@ impl<B: BackendHandler + OpaqueHandler + 'static> OpaqueHandler for PluginBacken
 
 #[async_trait]
 impl<B: BackendHandler + 'static> LdapEventHandler for PluginBackendHandler<B> {
-    #[instrument(skip_all(), level = "debug")]
+    #[instrument(skip_all, level = "debug")]
     async fn on_ldap_bind(
         &self,
         context: &RequestContext,
@@ -512,14 +512,14 @@ impl<B: BackendHandler + 'static> LdapEventHandler for PluginBackendHandler<B> {
             .await
             .unwrap_or(bind_result)
     }
-    #[instrument(skip_all(), level = "debug")]
+    #[instrument(skip_all, level = "debug")]
     async fn on_ldap_unbind(&self, context: &RequestContext, user_id: Option<UserId>) -> () {
         if let Some(uid) = user_id {
             let context = self.new_plugin_context(context);
             let _ = self.plugin_handler.on_ldap_unbind(context, uid).await;
         }
     }
-    #[instrument(skip_all(), level = "debug")]
+    #[instrument(skip_all, level = "debug")]
     async fn on_ldap_modify(
         &self,
         context: &RequestContext,
@@ -532,7 +532,7 @@ impl<B: BackendHandler + 'static> LdapEventHandler for PluginBackendHandler<B> {
             .await
             .unwrap_or(modify_result)
     }
-    #[instrument(skip_all(), level = "debug")]
+    #[instrument(skip_all, level = "debug")]
     async fn on_ldap_extended_request(
         &self,
         context: &RequestContext,
@@ -545,7 +545,7 @@ impl<B: BackendHandler + 'static> LdapEventHandler for PluginBackendHandler<B> {
             .await
             .unwrap_or(result)
     }
-    #[instrument(skip(self, password), level = "debug")]
+    #[instrument(skip_all, level = "debug", fields(user_id = ?user_id.as_str()))]
     async fn on_password_update(
         &self,
         context: &RequestContext,
@@ -558,7 +558,7 @@ impl<B: BackendHandler + 'static> LdapEventHandler for PluginBackendHandler<B> {
             .on_ldap_password_update(context, user_id.clone(), password)
             .await;
     }
-    #[instrument(skip_all(), level = "debug")]
+    #[instrument(skip_all, level = "debug")]
     async fn on_ldap_search_result(
         &self,
         context: &RequestContext,
@@ -572,7 +572,7 @@ impl<B: BackendHandler + 'static> LdapEventHandler for PluginBackendHandler<B> {
             .map(SearchResult::into)
             .unwrap_or(search_result)
     }
-    #[instrument(skip_all(), level = "debug")]
+    #[instrument(skip_all, level = "debug")]
     async fn on_ldap_root_dse(
         &self,
         context: &RequestContext,

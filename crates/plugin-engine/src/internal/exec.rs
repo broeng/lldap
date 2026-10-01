@@ -22,7 +22,7 @@ use super::types::plugins::Plugin;
 // to the caller.
 pub async fn exec_mutation_handler<
     A: BackendAPI,
-    T: IntoLua + FromLua + std::fmt::Debug + Clone + 'static,
+    T: IntoLua + FromLua + Clone + 'static,
     KVStore: KeyValueStore + 'static,
 >(
     context: PluginContext<A>,
@@ -56,7 +56,7 @@ pub async fn exec_mutation_handler<
             let exec_res = cb
                 .callback
                 .call_async((ctx.clone(), a.clone()))
-                .instrument(span)
+                .instrument(span.clone())
                 .await
                 .map_err(|e| e.to_string());
             match exec_res {
@@ -67,7 +67,7 @@ pub async fn exec_mutation_handler<
                     match decode_res {
                         Ok(plugin_res) => match plugin_res.0 {
                             Ok(v) => {
-                                debug!("Result from Lua: {:#?}", v);
+                                span.in_scope(|| debug!("Plugin handler completed successfully."));
                                 a = v;
                             }
                             Err(_e) => {
@@ -96,7 +96,7 @@ pub async fn exec_mutation_handler<
 // to the caller.
 pub async fn exec_mutation_handler_alt<
     A: BackendAPI,
-    T: IntoLua + FromLua + std::fmt::Debug + Clone + 'static,
+    T: IntoLua + FromLua + Clone + 'static,
     U: IntoLua + Clone + 'static,
     KVStore: KeyValueStore + 'static,
 >(
@@ -137,7 +137,7 @@ pub async fn exec_mutation_handler_alt<
                     a.clone(),
                     mutate_extra(&extra_args, plugin_ref),
                 ))
-                .instrument(span)
+                .instrument(span.clone())
                 .await
                 .map_err(|e| e.to_string());
             match exec_res {
@@ -148,7 +148,7 @@ pub async fn exec_mutation_handler_alt<
                     match decode_res {
                         Ok(plugin_res) => match plugin_res.0 {
                             Ok(v) => {
-                                debug!("Result from Lua: {:#?}", v);
+                                span.in_scope(|| debug!("Plugin handler completed successfully."));
                                 a = v;
                             }
                             Err(_e) => {
@@ -176,7 +176,7 @@ pub async fn exec_mutation_handler_alt<
 // does not have any effect.
 pub async fn exec_notification_handler<
     A: BackendAPI,
-    T: IntoLua + std::fmt::Debug + Clone,
+    T: IntoLua + Clone,
     KVStore: KeyValueStore + 'static,
 >(
     context: PluginContext<A>,
@@ -211,7 +211,7 @@ pub async fn exec_notification_handler<
                 .await
                 .map_err(|e| e.to_string());
             match exec_res {
-                Ok(_) => span.in_scope(|| debug!("Plugin handler completed succesfully.")),
+                Ok(_) => span.in_scope(|| debug!("Plugin handler completed successfully.")),
                 Err(e) => {
                     error!("Failed to execute plugin. Skipping: {}", e);
                 }

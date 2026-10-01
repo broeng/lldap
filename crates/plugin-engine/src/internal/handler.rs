@@ -105,7 +105,7 @@ macro_rules! invoke_notification_handler {
 impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
     for PluginHandler<KVStore, API>
 {
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err)]
     async fn initialize_plugins(&self, context: PluginContext<API>) -> Result<(), String> {
         if !self.plugin_registry.init.is_empty() {
             // Execute and notify the registered plugins
@@ -136,7 +136,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         Ok(())
     }
 
-    #[instrument(skip(self, context), level = "debug", err, fields(user_id = ?args.user_id.as_str()))]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?args.user_id.as_str()))]
     async fn on_create_user(
         &self,
         context: PluginContext<API>,
@@ -152,7 +152,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err, fields(user_id = ?args.user_id.as_str()))]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?args.user_id.as_str()))]
     async fn on_created_user(
         &self,
         context: PluginContext<API>,
@@ -167,7 +167,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err, fields(user_id = ?args.user_id.as_str()))]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?args.user_id.as_str()))]
     async fn on_update_user(
         &self,
         context: PluginContext<API>,
@@ -183,7 +183,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err, fields(user_id = ?args.user_id.as_str()))]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?args.user_id.as_str()))]
     async fn on_updated_user(
         &self,
         context: PluginContext<API>,
@@ -198,7 +198,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?user_id.as_str()))]
     async fn on_delete_user(
         &self,
         context: PluginContext<API>,
@@ -214,7 +214,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?user_id.as_str()))]
     async fn on_deleted_user(
         &self,
         context: PluginContext<API>,
@@ -229,7 +229,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err, fields(display_name = ?args.display_name.as_str()))]
+    #[instrument(skip_all, level = "debug", err, fields(display_name = ?args.display_name.as_str()))]
     async fn on_create_group(
         &self,
         context: PluginContext<API>,
@@ -245,7 +245,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err, fields(display_name = ?args.display_name.as_str()))]
+    #[instrument(skip_all, level = "debug", err, fields(display_name = ?args.display_name.as_str()))]
     async fn on_created_group(
         &self,
         context: PluginContext<API>,
@@ -260,7 +260,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context, args), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(group_id = ?args.group_id))]
     async fn on_update_group(
         &self,
         context: PluginContext<API>,
@@ -276,7 +276,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context, args), level = "debug")]
+    #[instrument(skip_all, level = "debug", fields(group_id = ?args.group_id))]
     async fn on_updated_group(
         &self,
         context: PluginContext<API>,
@@ -291,7 +291,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(group_id = ?group_id))]
     async fn on_delete_group(
         &self,
         context: PluginContext<API>,
@@ -307,7 +307,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(group_id = ?group_id))]
     async fn on_deleted_group(
         &self,
         context: PluginContext<API>,
@@ -322,7 +322,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?args.user_id.as_str(), group_id = ?args.group_id))]
     async fn on_add_user_to_group(
         &self,
         context: PluginContext<API>,
@@ -338,7 +338,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?args.user_id.as_str(), group_id = ?args.group_id))]
     async fn on_added_user_to_group(
         &self,
         context: PluginContext<API>,
@@ -353,7 +353,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?args.user_id.as_str(), group_id = ?args.group_id))]
     async fn on_remove_user_from_group(
         &self,
         context: PluginContext<API>,
@@ -369,7 +369,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?args.user_id.as_str(), group_id = ?args.group_id))]
     async fn on_removed_user_from_group(
         &self,
         context: PluginContext<API>,
@@ -384,7 +384,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?args.as_str()))]
     async fn on_get_user_details(
         &self,
         context: PluginContext<API>,
@@ -400,7 +400,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?args.user_id.as_str()))]
     async fn on_get_user_details_result(
         &self,
         context: PluginContext<API>,
@@ -416,7 +416,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(group_id = ?args))]
     async fn on_get_group_details(
         &self,
         context: PluginContext<API>,
@@ -425,7 +425,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         invoke_mutation_handler!(self, context, on_get_group_details, args.0, GroupId, args)
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(group_id = ?args.group_id))]
     async fn on_get_group_details_result(
         &self,
         context: PluginContext<API>,
@@ -441,7 +441,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err)]
     async fn on_list_users(
         &self,
         context: PluginContext<API>,
@@ -457,7 +457,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(count = args.len()))]
     async fn on_list_users_result(
         &self,
         context: PluginContext<API>,
@@ -473,7 +473,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err)]
     async fn on_list_groups(
         &self,
         context: PluginContext<API>,
@@ -489,7 +489,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(count = args.len()))]
     async fn on_list_groups_result(
         &self,
         context: PluginContext<API>,
@@ -521,7 +521,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?user_id.as_str()))]
     async fn on_get_user_groups(
         &self,
         context: PluginContext<API>,
@@ -537,7 +537,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip_all, level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(count = groups.len()))]
     async fn on_get_user_groups_result(
         &self,
         context: PluginContext<API>,
@@ -553,7 +553,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?args.name.as_str()))]
     async fn on_add_user_attribute(
         &self,
         context: PluginContext<API>,
@@ -569,7 +569,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?args.name.as_str()))]
     async fn on_added_user_attribute(
         &self,
         context: PluginContext<API>,
@@ -584,7 +584,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?args.name.as_str()))]
     async fn on_add_group_attribute(
         &self,
         context: PluginContext<API>,
@@ -600,7 +600,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?args.name.as_str()))]
     async fn on_added_group_attribute(
         &self,
         context: PluginContext<API>,
@@ -615,7 +615,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?args.as_str()))]
     async fn on_delete_user_attribute(
         &self,
         context: PluginContext<API>,
@@ -631,7 +631,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?args.as_str()))]
     async fn on_deleted_user_attribute(
         &self,
         context: PluginContext<API>,
@@ -646,7 +646,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?args.as_str()))]
     async fn on_delete_group_attribute(
         &self,
         context: PluginContext<API>,
@@ -662,7 +662,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?args.as_str()))]
     async fn on_deleted_group_attribute(
         &self,
         context: PluginContext<API>,
@@ -677,7 +677,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?args.as_str()))]
     async fn on_add_user_object_class(
         &self,
         context: PluginContext<API>,
@@ -693,7 +693,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?args.as_str()))]
     async fn on_added_user_object_class(
         &self,
         context: PluginContext<API>,
@@ -708,7 +708,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?args.as_str()))]
     async fn on_add_group_object_class(
         &self,
         context: PluginContext<API>,
@@ -724,7 +724,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?args.as_str()))]
     async fn on_added_group_object_class(
         &self,
         context: PluginContext<API>,
@@ -739,7 +739,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?args.as_str()))]
     async fn on_delete_user_object_class(
         &self,
         context: PluginContext<API>,
@@ -755,7 +755,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?args.as_str()))]
     async fn on_deleted_user_object_class(
         &self,
         context: PluginContext<API>,
@@ -770,7 +770,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?args.as_str()))]
     async fn on_delete_group_object_class(
         &self,
         context: PluginContext<API>,
@@ -786,7 +786,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?args.as_str()))]
     async fn on_deleted_group_object_class(
         &self,
         context: PluginContext<API>,
@@ -801,7 +801,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip(self, context, bind_request), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(result_code = ?bind_result.result_code))]
     async fn on_ldap_bind(
         &self,
         context: PluginContext<API>,
@@ -828,7 +828,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         }
     }
 
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?user_id.as_str()))]
     async fn on_ldap_unbind(
         &self,
         context: PluginContext<API>,
@@ -843,7 +843,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip_all(), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err)]
     async fn on_ldap_modify(
         &self,
         context: PluginContext<API>,
@@ -871,7 +871,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         }
     }
 
-    #[instrument(skip_all(), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err)]
     async fn on_ldap_extended_request(
         &self,
         context: PluginContext<API>,
@@ -898,7 +898,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         }
     }
 
-    #[instrument(skip(self, context, password), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?user_id.as_str()))]
     async fn on_ldap_password_update(
         &self,
         context: PluginContext<API>,
@@ -922,7 +922,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         Ok(())
     }
 
-    #[instrument(skip_all(), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err)]
     async fn on_ldap_search_result(
         &self,
         context: PluginContext<API>,
@@ -939,7 +939,7 @@ impl<KVStore: KeyValueStore + 'static, API: BackendAPI> PluginHandlerEvents<API>
         )
     }
 
-    #[instrument(skip_all(), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err)]
     async fn on_ldap_root_dse(
         &self,
         context: PluginContext<API>,

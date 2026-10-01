@@ -34,7 +34,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
     //
     // Read Schema
     //
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err)]
     async fn get_schema(&self, context: &RequestContext) -> Result<Schema, String> {
         self.backend_handler
             .get_schema(context)
@@ -44,7 +44,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
     //
     // User Listing
     //
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err)]
     async fn list_users(
         &self,
         context: &RequestContext,
@@ -79,7 +79,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
     //
     // Group Listing
     //
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err)]
     async fn list_groups(
         &self,
         context: &RequestContext,
@@ -112,7 +112,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
     //
     // Schema
     //
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?request.name.as_str()))]
     async fn add_user_attribute(
         &self,
         context: &RequestContext,
@@ -123,7 +123,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
             .await
             .map_err(|e| e.to_string())
     }
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?request.name.as_str()))]
     async fn add_group_attribute(
         &self,
         context: &RequestContext,
@@ -134,7 +134,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
             .await
             .map_err(|e| e.to_string())
     }
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?name.as_str()))]
     async fn delete_user_attribute(
         &self,
         context: &RequestContext,
@@ -145,7 +145,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
             .await
             .map_err(|e| e.to_string())
     }
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?name.as_str()))]
     async fn delete_group_attribute(
         &self,
         context: &RequestContext,
@@ -156,7 +156,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
             .await
             .map_err(|e| e.to_string())
     }
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?name.as_str()))]
     async fn add_user_object_class(
         &self,
         context: &RequestContext,
@@ -167,7 +167,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
             .await
             .map_err(|e| e.to_string())
     }
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?name.as_str()))]
     async fn add_group_object_class(
         &self,
         context: &RequestContext,
@@ -178,7 +178,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
             .await
             .map_err(|e| e.to_string())
     }
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?name.as_str()))]
     async fn delete_user_object_class(
         &self,
         context: &RequestContext,
@@ -189,7 +189,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
             .await
             .map_err(|e| e.to_string())
     }
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(name = ?name.as_str()))]
     async fn delete_group_object_class(
         &self,
         context: &RequestContext,
@@ -203,7 +203,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
     //
     // Groups
     //
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(group_id = ?group_id))]
     async fn get_group_details(
         &self,
         context: &RequestContext,
@@ -214,7 +214,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
             .await
             .map_err(|e| e.to_string())
     }
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(group_id = ?request.group_id))]
     async fn update_group(
         &self,
         context: &RequestContext,
@@ -225,7 +225,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
             .await
             .map_err(|e| e.to_string())
     }
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(display_name = ?request.display_name.as_str()))]
     async fn create_group(
         &self,
         context: &RequestContext,
@@ -236,7 +236,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
             .await
             .map_err(|e| e.to_string())
     }
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(group_id = ?group_id))]
     async fn delete_group(
         &self,
         context: &RequestContext,
@@ -250,7 +250,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
     //
     // Users
     //
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?user_id.as_str()))]
     async fn get_user_details(
         &self,
         context: &RequestContext,
@@ -261,7 +261,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
             .await
             .map_err(|e| e.to_string())
     }
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?request.user_id.as_str()))]
     async fn create_user(
         &self,
         context: &RequestContext,
@@ -272,7 +272,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
             .await
             .map_err(|e| e.to_string())
     }
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?request.user_id.as_str()))]
     async fn update_user(
         &self,
         context: &RequestContext,
@@ -283,14 +283,14 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
             .await
             .map_err(|e| e.to_string())
     }
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?user_id.as_str()))]
     async fn delete_user(&self, context: &RequestContext, user_id: UserId) -> Result<(), String> {
         self.backend_handler
             .delete_user(context, user_id)
             .await
             .map_err(|e| e.to_string())
     }
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?user_id.as_str(), group_id = ?group_id))]
     async fn add_user_to_group(
         &self,
         context: &RequestContext,
@@ -302,7 +302,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
             .await
             .map_err(|e| e.to_string())
     }
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?user_id.as_str(), group_id = ?group_id))]
     async fn remove_user_from_group(
         &self,
         context: &RequestContext,
@@ -314,7 +314,7 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
             .await
             .map_err(|e| e.to_string())
     }
-    #[instrument(skip(self, context), level = "debug", err)]
+    #[instrument(skip_all, level = "debug", err, fields(user_id = ?user_id.as_str()))]
     async fn get_user_groups(
         &self,
         context: &RequestContext,
