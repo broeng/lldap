@@ -99,7 +99,7 @@ local on_created_group = function(context, args)
         need_groups = false,
     })
 
-    -- The backend ignores need_groups and always gives the memberships.
+    -- A listing that asks for groups gives the memberships.
     local users, err = context.api:list_users({
         filter = { userQuery = { filter = { userId = "searchuser" }, need_groups = true } },
     })

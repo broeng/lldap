@@ -438,6 +438,7 @@ impl<Handler: UserListerBackendHandler + Sync> UserListerBackendHandler
             .user_filter
             .as_ref()
             .map(|u| UserRequestFilter::UserId(u.clone()));
+        let need_groups = filters.need_groups;
         let filters = match (filters.filter, user_filter) {
             (None, None) => None,
             (None, u) => u,
@@ -449,7 +450,7 @@ impl<Handler: UserListerBackendHandler + Sync> UserListerBackendHandler
                 context,
                 ListUsersRequest {
                     filter: filters,
-                    need_groups: true,
+                    need_groups,
                 },
             )
             .await

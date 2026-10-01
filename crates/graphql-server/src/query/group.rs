@@ -116,7 +116,7 @@ impl<Handler: BackendHandler> Group<Handler> {
                 &context.get_request_context(),
                 ListUsersRequest {
                     filter: Some(DomainRequestFilter::MemberOfId(GroupId(self.group_id))),
-                    need_groups: true,
+                    need_groups: false,
                 },
             )
             .instrument(span)

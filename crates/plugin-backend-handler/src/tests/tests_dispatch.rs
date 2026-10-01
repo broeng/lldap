@@ -1,12 +1,17 @@
 use std::collections::BTreeMap;
 
-use lldap_domain::types::GroupId;
-use lldap_domain_handlers::handler::{PluginInvocation, RequestContext, UserBackendHandler};
+use lldap_domain::types::{GroupId, UserId};
+use lldap_domain_handlers::handler::{
+    PluginInvocation, RequestContext, UserBackendHandler, UserRequestFilter,
+};
 use lldap_key_value_store::api::store::{KeyValueStore, Scope};
 use lldap_test_utils::MockTestBackendHandler;
 use pretty_assertions::assert_eq;
 
-use crate::tests::utils::{create_user_request, new_handler, new_memory_store, plugin_config};
+use crate::tests::utils::{
+    create_user_request, expect_get_schema_from_any_context, new_handler, new_memory_store,
+    plugin_config,
+};
 
 #[tokio::test]
 async fn test_plugin_created_group_is_dispatched_to_other_plugins() {
@@ -107,6 +112,46 @@ async fn test_plugin_initiated_call_keeps_request_context() {
 
     handler
         .create_user(&context, create_user_request("bob"))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_plugin_list_users_passes_need_groups_to_backend() {
+    let kvstore = new_memory_store().await;
+    let mut backend = MockTestBackendHandler::new();
+    expect_get_schema_from_any_context(&mut backend);
+    backend
+        .expect_create_user()
+        .times(1)
+        .returning(|_, _| Ok(()));
+    // A user query carries its own need_groups value.
+    backend
+        .expect_list_users()
+        .times(1)
+        .withf(|_, request| {
+            request.filter == Some(UserRequestFilter::UserId(UserId::new("bob")))
+                && !request.need_groups
+        })
+        .returning(|_, _| Ok(Vec::new()));
+    // An LDAP query has no need_groups value, thus groups are included.
+    backend
+        .expect_list_users()
+        .times(1)
+        .withf(|_, request| {
+            request.filter == Some(UserRequestFilter::UserId(UserId::new("bob")))
+                && request.need_groups
+        })
+        .returning(|_, _| Ok(Vec::new()));
+
+    let handler = new_handler(
+        backend,
+        kvstore,
+        vec![plugin_config("user_lister.lua", BTreeMap::new())],
+    );
+
+    handler
+        .create_user(&RequestContext::empty(), create_user_request("bob"))
         .await
         .unwrap();
 }

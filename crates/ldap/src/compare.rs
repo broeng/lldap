@@ -72,7 +72,7 @@ mod tests {
                 g.filter,
                 Some(UserRequestFilter::UserId(UserId::new("bob")))
             );
-            assert!(g.need_groups);
+            assert!(!g.need_groups);
             Ok(vec![UserAndGroups {
                 user: User {
                     user_id: UserId::new("bob"),
@@ -165,7 +165,7 @@ mod tests {
                 g.filter,
                 Some(UserRequestFilter::UserId(UserId::new("bob")))
             );
-            assert!(g.need_groups);
+            assert!(!g.need_groups);
             Ok(vec![])
         });
         mock.expect_list_groups().returning(|_, _| Ok(vec![]));
@@ -197,7 +197,7 @@ mod tests {
                 g.filter,
                 Some(UserRequestFilter::UserId(UserId::new("bob")))
             );
-            assert!(g.need_groups);
+            assert!(!g.need_groups);
             Ok(vec![UserAndGroups {
                 user: User {
                     user_id: UserId::new("bob"),

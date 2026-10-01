@@ -50,28 +50,29 @@ impl<B: BackendHandler + Clone> BackendAPI for ServerBackendAPI<B> {
         context: &RequestContext,
         filters: Option<QueryFilter>,
     ) -> Result<Vec<UserAndGroups>, String> {
-        let user_filter: Option<UserRequestFilter> = match filters {
+        // LDAP filters carry no `need_groups` flag, so they default to including groups.
+        let request = match filters {
             Some(f) => match f {
-                QueryFilter::LdapFilter(s) => Some(parse_user_filter(
-                    self.get_schema(context).await?,
-                    self.ldap_info,
-                    s,
-                )?),
-                QueryFilter::UserFilter(u) => u.filter,
+                QueryFilter::LdapFilter(s) => ListUsersRequest {
+                    filter: Some(parse_user_filter(
+                        self.get_schema(context).await?,
+                        self.ldap_info,
+                        s,
+                    )?),
+                    need_groups: true,
+                },
+                QueryFilter::UserFilter(u) => u,
                 QueryFilter::GroupFilter(_) => {
                     Err("Group filter cannot be used for listing users".to_string())?
                 }
             },
-            None => None,
+            None => ListUsersRequest {
+                filter: None,
+                need_groups: true,
+            },
         };
         self.backend_handler
-            .list_users(
-                context,
-                ListUsersRequest {
-                    filter: user_filter,
-                    need_groups: true,
-                },
-            )
+            .list_users(context, request)
             .await
             .map_err(|e| e.to_string())
     }

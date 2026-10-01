@@ -876,7 +876,7 @@ mod tests {
                             },
                         ),
                     ])),
-                    need_groups: true,
+                    need_groups: false,
                 }),
             )
             .times(1)
@@ -976,7 +976,7 @@ mod tests {
                 eq(context.clone()),
                 eq(ListUsersRequest {
                     filter: Some(UserRequestFilter::MemberOf("group_1".into())),
-                    need_groups: true,
+                    need_groups: false,
                 }),
             )
             .times(2)
@@ -1013,7 +1013,7 @@ mod tests {
                 eq(context.clone()),
                 eq(ListUsersRequest {
                     filter: Some(UserRequestFilter::from(false)),
-                    need_groups: true,
+                    need_groups: false,
                 }),
             )
             .times(1)
@@ -1045,7 +1045,7 @@ mod tests {
                     filter: Some(UserRequestFilter::Not(Box::new(
                         UserRequestFilter::Equality(UserColumn::DisplayName, "bob".to_string()),
                     ))),
-                    need_groups: true,
+                    need_groups: false,
                 }),
             )
             .times(1)
@@ -1096,7 +1096,7 @@ mod tests {
                 eq(context.clone()),
                 eq(ListUsersRequest {
                     filter: Some(UserRequestFilter::from(true)),
-                    need_groups: true,
+                    need_groups: false,
                 }),
             )
             .times(1)
@@ -1467,7 +1467,7 @@ mod tests {
                 eq(context.clone()),
                 eq(ListUsersRequest {
                     filter: Some(true.into()),
-                    need_groups: true,
+                    need_groups: false,
                 }),
             )
             .times(1)

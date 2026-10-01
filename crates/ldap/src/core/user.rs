@@ -487,7 +487,7 @@ mod tests {
                         UserRequestFilter::True,
                         UserRequestFilter::UserId(UserId::new("test")),
                     ])),
-                    need_groups: true,
+                    need_groups: false,
                 }),
             )
             .times(1)
@@ -527,7 +527,7 @@ mod tests {
                 eq(context.clone()),
                 eq(ListUsersRequest {
                     filter: Some(UserRequestFilter::True),
-                    need_groups: true,
+                    need_groups: false,
                 }),
             )
             .times(1)
@@ -602,7 +602,7 @@ mod tests {
                 eq(context.clone()),
                 eq(ListUsersRequest {
                     filter: Some(UserRequestFilter::UserId(UserId::new("bob"))),
-                    need_groups: true,
+                    need_groups: false,
                 }),
             )
             .times(1)
@@ -936,7 +936,7 @@ mod tests {
                         UserRequestFilter::Equality(UserColumn::DisplayName, "TestAll".to_string()),
                         UserRequestFilter::Equality(UserColumn::DisplayName, "testall".to_string()),
                     ])),
-                    need_groups: true,
+                    need_groups: false,
                 }),
             )
             .times(1)
