@@ -3,7 +3,10 @@ use juniper::{FieldResult, graphql_object};
 use lldap_access_control::ReadonlyBackendHandler;
 use lldap_domain::public_schema::PublicSchema;
 use lldap_domain::types::{Group as DomainGroup, GroupDetails, GroupId};
-use lldap_domain_handlers::handler::{BackendHandler, UserRequestFilter as DomainRequestFilter};
+use lldap_domain_handlers::{
+    handler::{BackendHandler, UserRequestFilter as DomainRequestFilter},
+    requests::ListUsersRequest,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{Instrument, debug, debug_span};
@@ -110,8 +113,11 @@ impl<Handler: BackendHandler> Group<Handler> {
             ))?;
         let domain_users = handler
             .list_users(
-                Some(DomainRequestFilter::MemberOfId(GroupId(self.group_id))),
-                false,
+                &context.get_request_context(),
+                ListUsersRequest {
+                    filter: Some(DomainRequestFilter::MemberOfId(GroupId(self.group_id))),
+                    need_groups: true,
+                },
             )
             .instrument(span)
             .await?;

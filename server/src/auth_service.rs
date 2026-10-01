@@ -16,14 +16,13 @@ use futures::future::{Ready, ok};
 use futures_util::FutureExt;
 use hmac::Hmac;
 use jwt::{SignWithKey, VerifyWithKey};
-use lldap_access_control::{ReadonlyBackendHandler, UserReadableBackendHandler};
+use lldap_access_control::{
+    AccessControlledBackendHandler, ReadonlyBackendHandler, UserReadableBackendHandler,
+};
 use lldap_auth::{
     JWTClaims, access_control::ValidationResults, login, password_reset, registration,
 };
 use lldap_domain::types::{GroupDetails, GroupName, UserId};
-use lldap_domain_handlers::handler::{
-    BackendHandler, BindRequest, LoginHandler, UserRequestFilter,
-};
 use lldap_domain_model::{error::DomainError, model::UserColumn};
 use lldap_opaque_handler::OpaqueHandler;
 use sha2::Sha512;
@@ -36,6 +35,11 @@ use std::{
 use time::ext::NumericalDuration;
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
+
+use lldap_domain_handlers::{
+    handler::{BackendHandler, BindRequest, LoginHandler, RequestContext, UserRequestFilter},
+    requests::ListUsersRequest,
+};
 
 type Token<S> = jwt::Token<jwt::Header, JWTClaims, S>;
 type SignedToken = Token<jwt::token::Signed>;
@@ -84,7 +88,7 @@ fn parse_refresh_token(token: &str) -> TcpResult<(u64, UserId)> {
     }
 }
 
-fn get_refresh_token(request: HttpRequest) -> TcpResult<(u64, UserId)> {
+fn get_refresh_token(request: &HttpRequest) -> TcpResult<(u64, UserId)> {
     match (
         request.cookie("refresh_token"),
         request.headers().get("refresh-token"),
@@ -101,12 +105,13 @@ fn get_refresh_token(request: HttpRequest) -> TcpResult<(u64, UserId)> {
 async fn get_refresh<Backend>(
     data: web::Data<AppState<Backend>>,
     request: HttpRequest,
+    request_context: RequestContext,
 ) -> TcpResult<HttpResponse>
 where
     Backend: TcpBackendHandler + BackendHandler + 'static,
 {
     let jwt_key = &data.jwt_key;
-    let (refresh_token_hash, user) = get_refresh_token(request)?;
+    let (refresh_token_hash, user) = get_refresh_token(&request)?;
     let found = data
         .get_tcp_handler()
         .check_token(refresh_token_hash, &user)
@@ -120,7 +125,11 @@ where
     if !path.ends_with('/') {
         path.push('/');
     };
-    let groups = data.get_readonly_handler().get_user_groups(&user).await?;
+
+    let groups = data
+        .get_readonly_handler()
+        .get_user_groups(&request_context, user.clone())
+        .await?;
     let token = create_jwt(data.get_tcp_handler(), jwt_key, &user, groups).await;
     Ok(HttpResponse::Ok()
         .cookie(
@@ -137,6 +146,39 @@ where
         }))
 }
 
+async fn get_request_context<Backend>(
+    handler: &AccessControlledBackendHandler<Backend>,
+    request: &HttpRequest,
+) -> RequestContext
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    match get_refresh_token(request) {
+        Ok((_, user)) => {
+            let validation_results = handler
+                .get_permissions_for_user(&RequestContext::empty(), user)
+                .await
+                .ok();
+            RequestContext::new(validation_results)
+        }
+        Err(_) => RequestContext::empty(),
+    }
+}
+
+async fn request_context_for<Backend>(
+    handler: &AccessControlledBackendHandler<Backend>,
+    user: UserId,
+) -> RequestContext
+where
+    Backend: TcpBackendHandler + BackendHandler + 'static,
+{
+    let validation_results = handler
+        .get_permissions_for_user(&RequestContext::empty(), user)
+        .await
+        .ok();
+    RequestContext::new(validation_results)
+}
+
 async fn get_refresh_handler<Backend>(
     data: web::Data<AppState<Backend>>,
     request: HttpRequest,
@@ -144,7 +186,8 @@ async fn get_refresh_handler<Backend>(
 where
     Backend: TcpBackendHandler + BackendHandler + 'static,
 {
-    get_refresh(data, request)
+    let context = get_request_context(&data.backend_handler, &request).await;
+    get_refresh(data, request, context)
         .await
         .unwrap_or_else(error_to_http_response)
 }
@@ -153,6 +196,7 @@ where
 async fn get_password_reset_step1<Backend>(
     data: web::Data<AppState<Backend>>,
     request: HttpRequest,
+    request_context: RequestContext,
 ) -> TcpResult<()>
 where
     Backend: TcpBackendHandler + BackendHandler + 'static,
@@ -164,11 +208,14 @@ where
     let user_results = data
         .get_readonly_handler()
         .list_users(
-            Some(UserRequestFilter::Or(vec![
-                UserRequestFilter::UserId(UserId::new(user_string)),
-                UserRequestFilter::Equality(UserColumn::Email, user_string.to_owned()),
-            ])),
-            false,
+            &request_context,
+            ListUsersRequest {
+                filter: Some(UserRequestFilter::Or(vec![
+                    UserRequestFilter::UserId(UserId::new(user_string)),
+                    UserRequestFilter::Equality(UserColumn::Email, user_string.to_owned()),
+                ])),
+                need_groups: false,
+            },
         )
         .await?;
     if user_results.is_empty() {
@@ -215,7 +262,8 @@ async fn get_password_reset_step1_handler<Backend>(
 where
     Backend: TcpBackendHandler + BackendHandler + 'static,
 {
-    get_password_reset_step1(data, request)
+    let context = get_request_context(&data.backend_handler, &request).await;
+    get_password_reset_step1(data, request, context)
         .await
         .map(|()| HttpResponse::Ok().finish())
         .unwrap_or_else(error_to_http_response)
@@ -287,7 +335,7 @@ async fn get_logout<Backend>(
 where
     Backend: TcpBackendHandler + BackendHandler + 'static,
 {
-    let (refresh_token_hash, user) = get_refresh_token(request)?;
+    let (refresh_token_hash, user) = get_refresh_token(&request)?;
     data.get_tcp_handler()
         .delete_refresh_token(refresh_token_hash)
         .await?;
@@ -357,13 +405,17 @@ where
 async fn get_login_successful_response<Backend>(
     data: &web::Data<AppState<Backend>>,
     name: &UserId,
+    request_context: RequestContext,
 ) -> TcpResult<HttpResponse>
 where
     Backend: TcpBackendHandler + BackendHandler,
 {
     // The authentication was successful, we need to fetch the groups to create the JWT
     // token.
-    let groups = data.get_readonly_handler().get_user_groups(name).await?;
+    let groups = data
+        .get_readonly_handler()
+        .get_user_groups(&request_context, name.to_owned())
+        .await?;
     let (refresh_token, max_age) = data.get_tcp_handler().create_refresh_token(name).await?;
     let token = create_jwt(data.get_tcp_handler(), &data.jwt_key, name, groups).await;
     let refresh_token_plus_name = refresh_token + "+" + name.as_str();
@@ -407,7 +459,14 @@ where
         .login_finish(request.into_inner())
         .await
     {
-        Ok(name) => get_login_successful_response(&data, &name).await,
+        Ok(name) => {
+            get_login_successful_response(
+                &data,
+                &name,
+                request_context_for(&data.backend_handler, name.clone()).await,
+            )
+            .await
+        }
         Err(e) => Err(e.into()),
     }
 }
@@ -428,6 +487,7 @@ where
 async fn simple_login<Backend>(
     data: web::Data<AppState<Backend>>,
     request: web::Json<login::ClientSimpleLoginRequest>,
+    request_context: RequestContext,
 ) -> TcpResult<HttpResponse>
 where
     Backend: TcpBackendHandler + BackendHandler + OpaqueHandler + LoginHandler + 'static,
@@ -437,8 +497,10 @@ where
         name: username.clone(),
         password,
     };
-    data.get_login_handler().bind(bind_request).await?;
-    get_login_successful_response(&data, &username).await
+    data.get_login_handler()
+        .bind(&request_context, bind_request)
+        .await?;
+    get_login_successful_response(&data, &username, request_context).await
 }
 
 async fn simple_login_handler<Backend>(
@@ -448,7 +510,7 @@ async fn simple_login_handler<Backend>(
 where
     Backend: TcpBackendHandler + BackendHandler + OpaqueHandler + LoginHandler + 'static,
 {
-    simple_login(data, request)
+    simple_login(data, request, RequestContext::empty())
         .await
         .unwrap_or_else(error_to_http_response)
 }
@@ -458,6 +520,7 @@ async fn opaque_register_start<Backend>(
     request: actix_web::HttpRequest,
     payload: actix_web::web::Payload,
     data: web::Data<AppState<Backend>>,
+    request_context: RequestContext,
 ) -> TcpResult<registration::ServerRegistrationStartResponse>
 where
     Backend: BackendHandler + OpaqueHandler + 'static,
@@ -482,7 +545,7 @@ where
     let user_id = &registration_start_request.username;
     let user_is_admin = data
         .get_readonly_handler()
-        .get_user_groups(user_id)
+        .get_user_groups(&request_context, user_id.to_owned())
         .await?
         .iter()
         .any(|g| g.display_name == "lldap_admin".into());
@@ -505,7 +568,7 @@ async fn opaque_register_start_handler<Backend>(
 where
     Backend: BackendHandler + OpaqueHandler + 'static,
 {
-    opaque_register_start(request, payload, data)
+    opaque_register_start(request, payload, data, RequestContext::empty())
         .await
         .map(|res| ApiResult::Left(web::Json(res)))
         .unwrap_or_else(error_to_api_response)

@@ -17,7 +17,10 @@ use lldap_domain::{
         AttributeName, AttributeType, GroupDetails, LdapObjectClass, User, UserAndGroups, UserId,
     },
 };
-use lldap_domain_handlers::handler::{UserListerBackendHandler, UserRequestFilter};
+use lldap_domain_handlers::{
+    handler::{RequestContext, UserListerBackendHandler, UserRequestFilter},
+    requests::ListUsersRequest,
+};
 use lldap_domain_model::model::UserColumn;
 use tracing::{debug, instrument, warn};
 
@@ -211,7 +214,7 @@ fn get_user_attribute_equality_filter(
     }
 }
 
-fn convert_user_filter(
+pub fn convert_user_filter(
     ldap_info: &LdapInfo,
     filter: &LdapFilter,
     schema: &PublicSchema,
@@ -390,11 +393,18 @@ pub async fn get_user_list<Backend: UserListerBackendHandler>(
     base: &str,
     backend: &Backend,
     schema: &PublicSchema,
+    request_context: &RequestContext,
 ) -> LdapResult<Vec<UserAndGroups>> {
     let filters = convert_user_filter(ldap_info, ldap_filter, schema)?;
     debug!(?filters);
     backend
-        .list_users(Some(filters), request_groups)
+        .list_users(
+            request_context,
+            ListUsersRequest {
+                filter: Some(filters),
+                need_groups: request_groups,
+            },
+        )
         .await
         .map_err(|e| LdapError {
             code: LdapResultCode::Other,
@@ -429,6 +439,7 @@ pub fn convert_users_to_ldap_op<'a>(
 mod tests {
     use super::*;
     use crate::{
+        events::NoopLdapEventHandler,
         handler::tests::{
             make_user_search_request, setup_bound_admin_handler, setup_bound_handler_with_group,
             setup_bound_readonly_handler,
@@ -466,13 +477,18 @@ mod tests {
     #[tokio::test]
     async fn test_search_regular_user() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::regular("test");
         mock.expect_list_users()
             .with(
-                eq(Some(UserRequestFilter::And(vec![
-                    UserRequestFilter::True,
-                    UserRequestFilter::UserId(UserId::new("test")),
-                ]))),
-                eq(false),
+                eq(context.clone()),
+                eq(ListUsersRequest {
+                    filter: Some(UserRequestFilter::And(vec![
+                        UserRequestFilter::True,
+                        UserRequestFilter::UserId(UserId::new("test")),
+                    ])),
+                    need_groups: true,
+                }),
             )
             .times(1)
             .return_once(|_, _| {
@@ -484,12 +500,13 @@ mod tests {
                     groups: None,
                 }])
             });
-        let ldap_handler = setup_bound_handler_with_group(mock, "regular").await;
+        let ldap_handler =
+            setup_bound_handler_with_group(mock, event_mock, "regular", &context).await;
 
         let request =
             make_user_search_request::<String>(LdapFilter::And(vec![]), vec!["1.1".to_string()]);
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![
                 LdapOp::SearchResultEntry(LdapSearchResultEntry {
                     dn: "uid=test,ou=people,dc=example,dc=com".to_string(),
@@ -503,14 +520,24 @@ mod tests {
     #[tokio::test]
     async fn test_search_readonly_user() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_users()
-            .with(eq(Some(UserRequestFilter::True)), eq(false))
+            .with(
+                eq(context.clone()),
+                eq(ListUsersRequest {
+                    filter: Some(UserRequestFilter::True),
+                    need_groups: true,
+                }),
+            )
             .times(1)
             .return_once(|_, _| Ok(vec![]));
-        let ldap_handler = setup_bound_readonly_handler(mock).await;
-        let request = make_user_search_request(LdapFilter::And(vec![]), vec!["1.1"]);
+        let ldap_handler = setup_bound_readonly_handler(mock, event_mock, &context).await;
+
+        let request =
+            make_user_search_request::<String>(LdapFilter::And(vec![]), vec!["1.1".to_string()]);
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![make_search_success()]),
         );
     }
@@ -518,8 +545,16 @@ mod tests {
     #[tokio::test]
     async fn test_search_member_of() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_users()
-            .with(eq(Some(UserRequestFilter::True)), eq(true))
+            .with(
+                eq(context.clone()),
+                eq(ListUsersRequest {
+                    filter: Some(UserRequestFilter::True),
+                    need_groups: true,
+                }),
+            )
             .times(1)
             .return_once(|_, _| {
                 Ok(vec![UserAndGroups {
@@ -537,13 +572,13 @@ mod tests {
                     }]),
                 }])
             });
-        let ldap_handler = setup_bound_readonly_handler(mock).await;
+        let ldap_handler = setup_bound_readonly_handler(mock, event_mock, &context).await;
         let request = make_user_search_request::<String>(
             LdapFilter::And(vec![]),
             vec!["memberOf".to_string()],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![
                 LdapOp::SearchResultEntry(LdapSearchResultEntry {
                     dn: "uid=bob,ou=people,dc=example,dc=com".to_string(),
@@ -560,21 +595,26 @@ mod tests {
     #[tokio::test]
     async fn test_search_user_as_scope() {
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::readonly("test");
         mock.expect_list_users()
             .with(
-                eq(Some(UserRequestFilter::UserId(UserId::new("bob")))),
-                eq(false),
+                eq(context.clone()),
+                eq(ListUsersRequest {
+                    filter: Some(UserRequestFilter::UserId(UserId::new("bob"))),
+                    need_groups: true,
+                }),
             )
             .times(1)
             .return_once(|_, _| Ok(vec![]));
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_search_request(
             "uid=bob,ou=people,dc=example,dc=com",
             LdapFilter::And(vec![]),
             vec!["objectClass"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![make_search_success()]),
         );
     }
@@ -584,6 +624,8 @@ mod tests {
         use chrono::prelude::*;
         use lldap_domain::uuid;
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::empty();
         mock.expect_list_users().times(1).return_once(|_, _| {
             Ok(vec![
                 UserAndGroups {
@@ -643,7 +685,7 @@ mod tests {
                 },
             ])
         });
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_user_search_request(
             LdapFilter::And(vec![]),
             vec![
@@ -660,7 +702,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![
                 LdapOp::SearchResultEntry(LdapSearchResultEntry {
                     dn: "uid=bob_1,ou=people,dc=example,dc=com".to_string(),
@@ -761,6 +803,8 @@ mod tests {
     async fn test_pwd_changed_time_format() {
         use lldap_domain::uuid;
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::admin("test");
         mock.expect_list_users().times(1).return_once(|_, _| {
             Ok(vec![UserAndGroups {
                 user: User {
@@ -777,10 +821,12 @@ mod tests {
                 groups: None,
             }])
         });
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_user_search_request(LdapFilter::And(vec![]), vec!["pwdChangedTime"]);
-        if let LdapOp::SearchResultEntry(entry) =
-            &ldap_handler.do_search_or_dse(&request).await.unwrap()[0]
+        if let LdapOp::SearchResultEntry(entry) = &ldap_handler
+            .do_search_or_dse(&context, &request)
+            .await
+            .unwrap()[0]
         {
             assert_eq!(entry.attributes.len(), 1);
             assert_eq!(entry.attributes[0].atype, "pwdChangedTime");
@@ -799,7 +845,9 @@ mod tests {
     async fn test_equality_filter_on_list_user_attribute_returns_error() {
         use lldap_domain::schema::{AttributeList, AttributeSchema, Schema};
         let mut mock = MockTestBackendHandler::new();
-        mock.expect_get_schema().returning(|| {
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::admin("test");
+        mock.expect_get_schema().returning(|_| {
             Ok(Schema {
                 user_attributes: AttributeList {
                     attributes: vec![AttributeSchema {
@@ -819,13 +867,13 @@ mod tests {
                 extra_group_object_classes: Vec::new(),
             })
         });
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_user_search_request(
             LdapFilter::Equality("mailalias".to_string(), "alias@example.com".to_string()),
             vec!["dn"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Err(LdapError {
                 code: LdapResultCode::UnwillingToPerform,
                 message: r#"Equality filter on list attribute "mailalias" is not supported"#
@@ -838,7 +886,9 @@ mod tests {
     async fn test_equality_filter_on_non_list_user_attribute() {
         use lldap_domain::schema::{AttributeList, AttributeSchema, Schema};
         let mut mock = MockTestBackendHandler::new();
-        mock.expect_get_schema().returning(|| {
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::admin("test");
+        mock.expect_get_schema().returning(|_| {
             Ok(Schema {
                 user_attributes: AttributeList {
                     attributes: vec![AttributeSchema {
@@ -861,13 +911,13 @@ mod tests {
         mock.expect_list_users()
             .times(1)
             .return_once(|_, _| Ok(vec![]));
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_user_search_request(
             LdapFilter::Equality("nickname".to_string(), "alice".to_string()),
             vec!["dn"],
         );
         assert_eq!(
-            ldap_handler.do_search_or_dse(&request).await,
+            ldap_handler.do_search_or_dse(&context, &request).await,
             Ok(vec![make_search_success()])
         );
     }
@@ -876,13 +926,18 @@ mod tests {
     async fn test_search_cn_case_insensitive() {
         use lldap_domain::uuid;
         let mut mock = MockTestBackendHandler::new();
+        let event_mock = NoopLdapEventHandler::new();
+        let context = RequestContext::admin("test");
         mock.expect_list_users()
             .with(
-                eq(Some(UserRequestFilter::Or(vec![
-                    UserRequestFilter::Equality(UserColumn::DisplayName, "TestAll".to_string()),
-                    UserRequestFilter::Equality(UserColumn::DisplayName, "testall".to_string()),
-                ]))),
-                eq(false),
+                eq(context.clone()),
+                eq(ListUsersRequest {
+                    filter: Some(UserRequestFilter::Or(vec![
+                        UserRequestFilter::Equality(UserColumn::DisplayName, "TestAll".to_string()),
+                        UserRequestFilter::Equality(UserColumn::DisplayName, "testall".to_string()),
+                    ])),
+                    need_groups: true,
+                }),
             )
             .times(1)
             .return_once(|_, _| {
@@ -898,12 +953,15 @@ mod tests {
                     groups: None,
                 }])
             });
-        let ldap_handler = setup_bound_admin_handler(mock).await;
+        let ldap_handler = setup_bound_admin_handler(mock, event_mock, &context).await;
         let request = make_user_search_request(
             LdapFilter::Equality("cn".to_string(), "TestAll".to_string()),
             vec!["cn", "uid"],
         );
-        let results = ldap_handler.do_search_or_dse(&request).await.unwrap();
+        let results = ldap_handler
+            .do_search_or_dse(&context, &request)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
         if let LdapOp::SearchResultEntry(entry) = &results[0] {
             assert_eq!(entry.dn, "uid=testall,ou=people,dc=example,dc=com");

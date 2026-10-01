@@ -9,10 +9,14 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+test = []
+
 [dependencies]
 anyhow = { workspace = true }
 tracing = { workspace = true }
 itertools = { workspace = true }
+async-trait = { workspace = true }
 
 derive_more = { workspace = true }
 
@@ -37,8 +41,15 @@ path = "../domain"
 [dependencies.lldap_domain_handlers]
 path = "../domain-handlers"
 
+[dev-dependencies.lldap_domain_handlers]
+path = "../domain-handlers"
+features = ["test"]
+
 [dependencies.lldap_domain_model]
 path = "../domain-model"
+
+[dependencies.lldap_plugin_engine]
+path = "../plugin-engine"
 
 [dependencies.lldap_opaque_handler]
 path = "../opaque-handler"

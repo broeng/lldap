@@ -1,11 +1,13 @@
 use crate::sql_backend_handler::SqlBackendHandler;
 use async_trait::async_trait;
 use lldap_domain::{
-    requests::CreateAttributeRequest,
     schema::{AttributeList, AttributeSchema, Schema},
     types::{AttributeName, LdapObjectClass},
 };
-use lldap_domain_handlers::handler::{ReadSchemaBackendHandler, SchemaBackendHandler};
+use lldap_domain_handlers::{
+    handler::{ReadSchemaBackendHandler, RequestContext, SchemaBackendHandler},
+    requests::CreateAttributeRequest,
+};
 use lldap_domain_model::{
     error::{DomainError, Result},
     model,
@@ -16,7 +18,7 @@ use sea_orm::{
 
 #[async_trait]
 impl ReadSchemaBackendHandler for SqlBackendHandler {
-    async fn get_schema(&self) -> Result<Schema> {
+    async fn get_schema(&self, _context: &RequestContext) -> Result<Schema> {
         Ok(self
             .sql_pool
             .transaction::<_, Schema, DomainError>(|transaction| {
@@ -28,7 +30,11 @@ impl ReadSchemaBackendHandler for SqlBackendHandler {
 
 #[async_trait]
 impl SchemaBackendHandler for SqlBackendHandler {
-    async fn add_user_attribute(&self, request: CreateAttributeRequest) -> Result<()> {
+    async fn add_user_attribute(
+        &self,
+        _context: &RequestContext,
+        request: CreateAttributeRequest,
+    ) -> Result<()> {
         self.sql_pool
             .transaction::<_, (), DomainError>(|transaction| {
                 Box::pin(async move {
@@ -65,7 +71,11 @@ impl SchemaBackendHandler for SqlBackendHandler {
         Ok(())
     }
 
-    async fn add_group_attribute(&self, request: CreateAttributeRequest) -> Result<()> {
+    async fn add_group_attribute(
+        &self,
+        _context: &RequestContext,
+        request: CreateAttributeRequest,
+    ) -> Result<()> {
         self.sql_pool
             .transaction::<_, (), DomainError>(|transaction| {
                 Box::pin(async move {
@@ -102,52 +112,76 @@ impl SchemaBackendHandler for SqlBackendHandler {
         Ok(())
     }
 
-    async fn delete_user_attribute(&self, name: &AttributeName) -> Result<()> {
-        model::UserAttributeSchema::delete_by_id(name.clone())
+    async fn delete_user_attribute(
+        &self,
+        _context: &RequestContext,
+        name: AttributeName,
+    ) -> Result<()> {
+        model::UserAttributeSchema::delete_by_id(name)
             .exec(&self.sql_pool)
             .await?;
         Ok(())
     }
 
-    async fn delete_group_attribute(&self, name: &AttributeName) -> Result<()> {
-        model::GroupAttributeSchema::delete_by_id(name.clone())
+    async fn delete_group_attribute(
+        &self,
+        _context: &RequestContext,
+        name: AttributeName,
+    ) -> Result<()> {
+        model::GroupAttributeSchema::delete_by_id(name)
             .exec(&self.sql_pool)
             .await?;
         Ok(())
     }
 
-    async fn add_user_object_class(&self, name: &LdapObjectClass) -> Result<()> {
+    async fn add_user_object_class(
+        &self,
+        _context: &RequestContext,
+        name: LdapObjectClass,
+    ) -> Result<()> {
         let mut name_key = name.to_string();
         name_key.make_ascii_lowercase();
         model::user_object_classes::ActiveModel {
             lower_object_class: Set(name_key),
-            object_class: Set(name.clone()),
+            object_class: Set(name),
         }
         .insert(&self.sql_pool)
         .await?;
         Ok(())
     }
 
-    async fn add_group_object_class(&self, name: &LdapObjectClass) -> Result<()> {
+    async fn add_group_object_class(
+        &self,
+        _context: &RequestContext,
+        name: LdapObjectClass,
+    ) -> Result<()> {
         let mut name_key = name.to_string();
         name_key.make_ascii_lowercase();
         model::group_object_classes::ActiveModel {
             lower_object_class: Set(name_key),
-            object_class: Set(name.clone()),
+            object_class: Set(name),
         }
         .insert(&self.sql_pool)
         .await?;
         Ok(())
     }
 
-    async fn delete_user_object_class(&self, name: &LdapObjectClass) -> Result<()> {
+    async fn delete_user_object_class(
+        &self,
+        _context: &RequestContext,
+        name: LdapObjectClass,
+    ) -> Result<()> {
         model::UserObjectClasses::delete_by_id(name.as_str().to_ascii_lowercase())
             .exec(&self.sql_pool)
             .await?;
         Ok(())
     }
 
-    async fn delete_group_object_class(&self, name: &LdapObjectClass) -> Result<()> {
+    async fn delete_group_object_class(
+        &self,
+        _context: &RequestContext,
+        name: LdapObjectClass,
+    ) -> Result<()> {
         model::GroupObjectClasses::delete_by_id(name.as_str().to_ascii_lowercase())
             .exec(&self.sql_pool)
             .await?;
@@ -224,17 +258,23 @@ impl SqlBackendHandler {
 mod tests {
     use super::*;
     use crate::sql_backend_handler::tests::*;
-    use lldap_domain::requests::UpdateUserRequest;
     use lldap_domain::schema::AttributeList;
     use lldap_domain::types::{Attribute, AttributeType};
-    use lldap_domain_handlers::handler::{UserBackendHandler, UserRequestFilter};
+    use lldap_domain_handlers::{
+        handler::{UserBackendHandler, UserRequestFilter},
+        requests::UpdateUserRequest,
+    };
     use pretty_assertions::assert_eq;
 
     #[tokio::test]
     async fn test_default_schema() {
         let fixture = TestFixture::new().await;
         assert_eq!(
-            fixture.handler.get_schema().await.unwrap(),
+            fixture
+                .handler
+                .get_schema(&RequestContext::empty())
+                .await
+                .unwrap(),
             Schema {
                 user_attributes: AttributeList {
                     attributes: vec![
@@ -279,6 +319,7 @@ mod tests {
     #[tokio::test]
     async fn test_user_attribute_add_and_delete() {
         let fixture = TestFixture::new().await;
+        let context = RequestContext::empty();
         let new_attribute = CreateAttributeRequest {
             name: "new_attribute".into(),
             attribute_type: AttributeType::Integer,
@@ -288,7 +329,7 @@ mod tests {
         };
         fixture
             .handler
-            .add_user_attribute(new_attribute)
+            .add_user_attribute(&context, new_attribute)
             .await
             .unwrap();
         let expected_value = AttributeSchema {
@@ -303,7 +344,7 @@ mod tests {
         assert!(
             fixture
                 .handler
-                .get_schema()
+                .get_schema(&context)
                 .await
                 .unwrap()
                 .user_attributes
@@ -312,13 +353,13 @@ mod tests {
         );
         fixture
             .handler
-            .delete_user_attribute(&"new_attribute".into())
+            .delete_user_attribute(&context, "new_attribute".into())
             .await
             .unwrap();
         assert!(
             !fixture
                 .handler
-                .get_schema()
+                .get_schema(&context)
                 .await
                 .unwrap()
                 .user_attributes
@@ -330,6 +371,7 @@ mod tests {
     #[tokio::test]
     async fn test_user_attribute_present_filter() {
         let fixture = TestFixture::new().await;
+        let context = RequestContext::empty();
         let new_attribute = CreateAttributeRequest {
             name: "new_attribute".into(),
             attribute_type: AttributeType::Integer,
@@ -339,22 +381,26 @@ mod tests {
         };
         fixture
             .handler
-            .add_user_attribute(new_attribute)
+            .add_user_attribute(&context, new_attribute)
             .await
             .unwrap();
         fixture
             .handler
-            .update_user(UpdateUserRequest {
-                user_id: "bob".into(),
-                insert_attributes: vec![Attribute {
-                    name: "new_attribute".into(),
-                    value: vec![3].into(),
-                }],
-                ..Default::default()
-            })
+            .update_user(
+                &context,
+                UpdateUserRequest {
+                    user_id: "bob".into(),
+                    insert_attributes: vec![Attribute {
+                        name: "new_attribute".into(),
+                        value: vec![3].into(),
+                    }],
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
         let users = get_user_names(
+            &RequestContext::empty(),
             &fixture.handler,
             Some(UserRequestFilter::CustomAttributePresent(
                 "new_attribute".into(),
@@ -367,6 +413,7 @@ mod tests {
     #[tokio::test]
     async fn test_group_attribute_add_and_delete() {
         let fixture = TestFixture::new().await;
+        let context = RequestContext::empty();
         let new_attribute = CreateAttributeRequest {
             name: "NeW_aTTribute".into(),
             attribute_type: AttributeType::JpegPhoto,
@@ -376,7 +423,7 @@ mod tests {
         };
         fixture
             .handler
-            .add_group_attribute(new_attribute)
+            .add_group_attribute(&context, new_attribute)
             .await
             .unwrap();
         let expected_value = AttributeSchema {
@@ -391,7 +438,7 @@ mod tests {
         assert!(
             fixture
                 .handler
-                .get_schema()
+                .get_schema(&context)
                 .await
                 .unwrap()
                 .group_attributes
@@ -400,13 +447,13 @@ mod tests {
         );
         fixture
             .handler
-            .delete_group_attribute(&"new_attriBUte".into())
+            .delete_group_attribute(&context, "new_attriBUte".into())
             .await
             .unwrap();
         assert!(
             !fixture
                 .handler
-                .get_schema()
+                .get_schema(&context)
                 .await
                 .unwrap()
                 .group_attributes
@@ -418,16 +465,17 @@ mod tests {
     #[tokio::test]
     async fn test_user_object_class_add_and_delete() {
         let fixture = TestFixture::new().await;
+        let context = RequestContext::empty();
         let new_object_class = LdapObjectClass::new("newObjectClass");
         fixture
             .handler
-            .add_user_object_class(&new_object_class)
+            .add_user_object_class(&context, new_object_class.clone())
             .await
             .unwrap();
         assert_eq!(
             fixture
                 .handler
-                .get_schema()
+                .get_schema(&context)
                 .await
                 .unwrap()
                 .extra_user_object_classes,
@@ -435,13 +483,13 @@ mod tests {
         );
         fixture
             .handler
-            .add_user_object_class(&LdapObjectClass::new("newobjEctclass"))
+            .add_user_object_class(&context, LdapObjectClass::new("newobjEctclass"))
             .await
             .expect_err("Should not be able to add the same object class twice");
         assert_eq!(
             fixture
                 .handler
-                .get_schema()
+                .get_schema(&context)
                 .await
                 .unwrap()
                 .extra_user_object_classes,
@@ -449,13 +497,13 @@ mod tests {
         );
         fixture
             .handler
-            .delete_user_object_class(&new_object_class)
+            .delete_user_object_class(&context, new_object_class)
             .await
             .unwrap();
         assert!(
             fixture
                 .handler
-                .get_schema()
+                .get_schema(&context)
                 .await
                 .unwrap()
                 .extra_user_object_classes
